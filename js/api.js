@@ -1,6 +1,6 @@
 // Datenzugriff: Supabase, oder ein Demo-Speicher im Browser, solange config.js leer ist.
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw12svea";
-import { nameToEmail, pinToPassword } from "./logic.js?v=mw12svea";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw132qyd";
+import { nameToEmail, pinToPassword } from "./logic.js?v=mw132qyd";
 
 export const DEMO = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
@@ -89,6 +89,17 @@ function supabaseApi(sb) {
     async deleteChallenge(id) { must(await sb.from("challenges").delete().eq("id", id)) },
     async joinChallenge(id) { const { error } = await sb.from("challenge_members").insert({ challenge_id: id }); if (error && error.code !== "23505") throw new Error(friendly(error)) },
     async leaveChallenge(id) { must(await sb.from("challenge_members").delete().eq("challenge_id", id).eq("user_id", me)) },
+
+    async savePushSub(sub) {
+      const j = sub.toJSON();
+      must(await sb.from("push_subscriptions").upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_id: me }));
+    },
+    async deletePushSub(endpoint) { must(await sb.from("push_subscriptions").delete().eq("endpoint", endpoint)) },
+    async schedulePush(sendAt, title, body) {
+      await this.cancelPush();
+      must(await sb.from("push_jobs").insert({ send_at: new Date(sendAt).toISOString(), title, body }));
+    },
+    async cancelPush() { must(await sb.from("push_jobs").delete().eq("user_id", me)) },
 
     // Hevy-Import: bereits vorhandene Trainings (gleiche Startzeit) werden übersprungen
     async importWorkouts(list, onProgress) {
@@ -183,6 +194,10 @@ function demoApi() {
     async deleteChallenge(cid) { db.challenges = db.challenges.filter(c => c.id !== cid); db.members = db.members.filter(m => m.challenge_id !== cid); save() },
     async joinChallenge(cid) { if (!db.members.some(m => m.challenge_id === cid && m.user_id === me())) db.members.push({ challenge_id: cid, user_id: me() }); save() },
     async leaveChallenge(cid) { db.members = db.members.filter(m => !(m.challenge_id === cid && m.user_id === me())); save() },
+    async savePushSub() { },
+    async deletePushSub() { },
+    async schedulePush() { },
+    async cancelPush() { },
     async importWorkouts(list, onProgress) {
       const existing = new Set(db.workouts.filter(w => w.user_id === me()).map(w => w.started_at));
       const fresh = list.filter(w => !existing.has(w.started_at));

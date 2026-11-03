@@ -1,5 +1,6 @@
-import { createApi, DEMO } from "./api.js?v=mw12svea";
-import * as L from "./logic.js?v=mw12svea";
+import { createApi, DEMO } from "./api.js?v=mw132qyd";
+import { VAPID_PUBLIC } from "./config.js?v=mw132qyd";
+import * as L from "./logic.js?v=mw132qyd";
 
 const $ = s => document.querySelector(s);
 const view = $("#view");
@@ -247,7 +248,7 @@ async function finishWorkout() {
   if (!n) { S.confirm = "discard"; render(); return }
   await guard(async () => {
     await api.finishWorkout(active.workoutId);
-    const t = active.title; active = null; saveActive(); rest = null; saveRest(); releaseAwake();
+    const t = active.title; active = null; saveActive(); rest = null; saveRest(); syncRestPush(); releaseAwake();
     await loadMine(); render(); scrollTo(0, 0);
     toast(`${t} gespeichert: ${nSets(n)}`);
   });
@@ -255,7 +256,7 @@ async function finishWorkout() {
 async function discardWorkout() {
   await guard(async () => {
     await api.deleteWorkout(active.workoutId);
-    active = null; saveActive(); rest = null; saveRest(); S.confirm = null; releaseAwake();
+    active = null; saveActive(); rest = null; saveRest(); syncRestPush(); S.confirm = null; releaseAwake();
     await loadMine(); render();
   });
 }
@@ -280,7 +281,7 @@ function beep() {
   } catch { }
   navigator.vibrate?.([200, 100, 200]);
 }
-function startRest(sec) { rest = { end: Date.now() + sec * 1000, total: sec, beeped: false }; saveRest(); renderTimer() }
+function startRest(sec) { rest = { end: Date.now() + sec * 1000, total: sec, beeped: false }; saveRest(); renderTimer(); syncRestPush() }
 function renderTimer() {
   const el = $("#timer");
   if (!rest || !S.me) { el.hidden = true; return }
@@ -456,6 +457,7 @@ function profileView() {
       <p class="small muted">Der Wiederholungsbereich gilt für alle Übungen, außer du stellst ihn unter Fortschritt pro Übung anders ein.</p>
       <button class="btn" type="submit">Speichern</button>
     </form>
+    ${pushCard()}
     ${myWorkoutsCard()}
     <div class="card">
       <h2>Hevy-Daten importieren</h2>
@@ -717,6 +719,50 @@ function weekStrip() {
       <span class="av ${x.p.id === S.me ? "me" : ""}">${initials(x.p.name)}</span><span class="nm">${esc(x.p.name)}</span>${pips(x.thisWeek, x.goal)}${x.streak ? `<span class="streak num"><i class="ph ph-fire"></i>${x.streak}</span>` : ""}</a>`).join("")}</div>`;
 }
 
+// ---------- Push-Benachrichtigungen ----------
+const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
+const pushOn = () => store.get("bwau.push") === true && typeof Notification !== "undefined" && Notification.permission === "granted";
+let swReg = null;
+async function initSW() { try { if ("serviceWorker" in navigator) swReg = await navigator.serviceWorker.register("sw.js") } catch { } }
+function b64urlBytes(s) {
+  const b = atob((s + "=".repeat((4 - s.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+async function enablePush() {
+  if (!pushSupported()) throw new Error("Dieses Gerät oder dieser Browser unterstützt keine Benachrichtigungen.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("Benachrichtigungen wurden nicht erlaubt. Du kannst das in den iPhone-Einstellungen unter Mitteilungen → BWAU ändern.");
+  swReg ??= await navigator.serviceWorker.register("sw.js");
+  await navigator.serviceWorker.ready;
+  const sub = (await swReg.pushManager.getSubscription()) ?? await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(VAPID_PUBLIC) });
+  await api.savePushSub(sub);
+  store.set("bwau.push", true);
+}
+async function disablePush() {
+  const sub = await swReg?.pushManager.getSubscription();
+  if (sub) { await api.deletePushSub(sub.endpoint).catch(() => { }); await sub.unsubscribe() }
+  store.set("bwau.push", false);
+}
+// Pausen-Ende in Supabase planen bzw. löschen, damit die Nachricht auch bei gesperrtem Handy kommt
+function syncRestPush() {
+  if (!pushOn()) return;
+  const next = active?.items.find(it => it.rows.some(r => !r.id))?.exercise;
+  (rest ? api.schedulePush(rest.end, "Pause vorbei", next ? `Weiter mit ${next}` : "Weiter geht's.") : api.cancelPush()).catch(() => { });
+}
+function pushCard() {
+  let body;
+  if (DEMO) body = `<p class="small muted">Im Demo-Modus nicht verfügbar.</p>`;
+  else if (!pushSupported()) body = standalone()
+    ? `<p class="small muted">Dieses Gerät unterstützt keine Benachrichtigungen. Auf dem iPhone braucht es mindestens iOS 16.4.</p>`
+    : `<p class="small muted">Öffne BWAU über das Icon auf deinem Home-Bildschirm. Nur dort erlaubt das iPhone Benachrichtigungen.</p>`;
+  else if (pushOn()) body = `<p class="small muted">Aktiv auf diesem Gerät. Wenn die Pause vorbei ist, kommt eine Mitteilung, auch bei gesperrtem Handy.</p>
+      <div class="row"><button class="btn quiet" data-act="pushTest"><i class="ph ph-bell-ringing"></i>Test senden</button><button class="link" data-act="pushOff" style="color:var(--muted)">Ausschalten</button></div>`;
+  else body = `<p class="small muted">Bekomm eine Mitteilung, wenn die Pause vorbei ist, auch wenn das Handy gesperrt ist.</p>
+      <button class="btn" data-act="pushOn" style="align-self:flex-start" ${S.pushMsg ? "disabled" : ""}><i class="ph ph-bell"></i>${S.pushMsg || "Aktivieren"}</button>`;
+  return `<div class="card"><h2>Benachrichtigungen</h2>${body}</div>`;
+}
+
 // ---------- Ereignisse ----------
 document.addEventListener("pointerdown", unlockAudio, { once: true });
 
@@ -752,8 +798,11 @@ document.addEventListener("click", async ev => {
     case "finish": return finishWorkout();
     case "discard": S.confirm = "discard"; return render();
     case "discardYes": return discardWorkout();
-    case "restAdd": rest.end += +b.dataset.d * 1000; rest.total = Math.max(rest.total, Math.round((rest.end - Date.now()) / 1000)); rest.beeped = false; saveRest(); return renderTimer();
-    case "restSkip": rest = null; saveRest(); return renderTimer();
+    case "restAdd": rest.end += +b.dataset.d * 1000; rest.total = Math.max(rest.total, Math.round((rest.end - Date.now()) / 1000)); rest.beeped = false; saveRest(); syncRestPush(); return renderTimer();
+    case "restSkip": rest = null; saveRest(); syncRestPush(); return renderTimer();
+    case "pushOn": S.pushMsg = "Wird aktiviert …"; render(); return guard(async () => { try { await enablePush(); S.pushMsg = null; toast("Benachrichtigungen aktiv") } catch (e) { S.pushMsg = null; throw e } render() });
+    case "pushOff": return guard(async () => { await disablePush(); render(); toast("Benachrichtigungen aus") });
+    case "pushTest": return guard(async () => { await api.schedulePush(Date.now() + 10000, "BWAU", "Test: Benachrichtigungen funktionieren."); toast("Kommt in etwa 10 Sekunden. Du kannst das Handy sperren.") });
     case "progTab": S.progTab = b.dataset.v; return render();
     case "openSettings": { const n = decodeURIComponent(b.dataset.v); S.openSettings = S.openSettings === n ? null : n; return render() }
     case "resetSettings": { const n = decodeURIComponent(b.dataset.v); return guard(async () => { await api.deleteSetting(n); S.settings.delete(n); render() }) }
@@ -866,6 +915,7 @@ setInterval(() => {
 (async () => {
   try {
     api = await createApi();
+    initSW();
     S.me = await api.session();
     if (S.me) await loadMine();
     if (S.me && !S.profile) { await api.signOut(); S.me = null }
