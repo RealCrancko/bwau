@@ -1,5 +1,5 @@
-import { createApi, DEMO } from "./api.js";
-import * as L from "./logic.js";
+import { createApi, DEMO } from "./api.js?v=mw129xth";
+import * as L from "./logic.js?v=mw129xth";
 
 const $ = s => document.querySelector(s);
 const view = $("#view");

@@ -1,6 +1,6 @@
 // Datenzugriff: Supabase, oder ein Demo-Speicher im Browser, solange config.js leer ist.
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
-import { nameToEmail, pinToPassword } from "./logic.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw129xth";
+import { nameToEmail, pinToPassword } from "./logic.js?v=mw129xth";
 
 export const DEMO = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
