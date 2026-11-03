@@ -1,6 +1,6 @@
 // Datenzugriff: Supabase, oder ein Demo-Speicher im Browser, solange config.js leer ist.
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw129xth";
-import { nameToEmail, pinToPassword } from "./logic.js?v=mw129xth";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw12svea";
+import { nameToEmail, pinToPassword } from "./logic.js?v=mw12svea";
 
 export const DEMO = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
@@ -52,7 +52,7 @@ function supabaseApi(sb) {
     async deleteSet(id) { must(await sb.from("sets").delete().eq("id", id)) },
 
     async feed(limit = 40) {
-      return must(await sb.from("workouts").select("id,user_id,title,started_at,ended_at,sets(exercise,weight,reps,set_index)")
+      return must(await sb.from("workouts").select("id,user_id,title,started_at,ended_at,sets(exercise,weight,reps,set_index),reactions(kind,user_id),comments(id,user_id,body,created_at)")
         .order("started_at", { ascending: false }).limit(limit));
     },
     async bestLifts() { return pageAll(() => sb.from("best_lifts").select("*").order("e1rm", { ascending: false })) },
@@ -71,6 +71,24 @@ function supabaseApi(sb) {
                   : must(await sb.from("plans").insert(row).select().single());
     },
     async deletePlan(id) { must(await sb.from("plans").delete().eq("id", id)) },
+
+    async updateWorkout(id, patch) { must(await sb.from("workouts").update(patch).eq("id", id)) },
+    async updateSet(id, patch) { must(await sb.from("sets").update(patch).eq("id", id)) },
+    async userWorkouts(uid) { return pageAll(() => sb.from("workouts").select("id,title,started_at,ended_at").eq("user_id", uid).order("started_at")) },
+    async userSets(uid) { return pageAll(() => sb.from("sets").select("id,workout_id,exercise,set_index,weight,reps,performed_at").eq("user_id", uid).order("id")) },
+    async weekWorkouts(since) { return pageAll(() => sb.from("workouts").select("user_id,started_at").not("ended_at", "is", null).gte("started_at", since)) },
+    async exerciseSets(exercise, uids) { return pageAll(() => sb.from("sets").select("user_id,weight,reps,performed_at").eq("exercise", exercise).in("user_id", uids)) },
+
+    async react(workout_id, kind) { const { error } = await sb.from("reactions").insert({ workout_id, kind }); if (error && error.code !== "23505") throw new Error(friendly(error)) },
+    async unreact(workout_id, kind) { must(await sb.from("reactions").delete().eq("workout_id", workout_id).eq("kind", kind).eq("user_id", me)) },
+    async comment(workout_id, body) { return must(await sb.from("comments").insert({ workout_id, body }).select().single()) },
+    async deleteComment(id) { must(await sb.from("comments").delete().eq("id", id)) },
+
+    async challenges() { return must(await sb.from("challenges").select("*,challenge_members(user_id)").order("ends_on", { ascending: false })) },
+    async createChallenge(ch) { const row = must(await sb.from("challenges").insert(ch).select().single()); await this.joinChallenge(row.id); return row },
+    async deleteChallenge(id) { must(await sb.from("challenges").delete().eq("id", id)) },
+    async joinChallenge(id) { const { error } = await sb.from("challenge_members").insert({ challenge_id: id }); if (error && error.code !== "23505") throw new Error(friendly(error)) },
+    async leaveChallenge(id) { must(await sb.from("challenge_members").delete().eq("challenge_id", id).eq("user_id", me)) },
 
     // Hevy-Import: bereits vorhandene Trainings (gleiche Startzeit) werden übersprungen
     async importWorkouts(list, onProgress) {
@@ -95,6 +113,7 @@ function demoApi() {
   const KEY = "bwau.demo";
   let db; try { db = JSON.parse(localStorage.getItem(KEY)) } catch { }
   db ??= { seq: 1, users: [], workouts: [], sets: [], plans: [], exercises: [], settings: [], session: null };
+  for (const k of ["reactions", "comments", "challenges", "members"]) db[k] ??= [];
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(db)) } catch { } };
   const id = () => db.seq++;
   const me = () => db.session;
@@ -123,7 +142,7 @@ function demoApi() {
     async deleteSet(sid) { db.sets = db.sets.filter(s => s.id !== sid); save() },
     async feed(limit = 40) {
       return wait([...db.workouts].sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, limit)
-        .map(w => ({ ...w, sets: db.sets.filter(s => s.workout_id === w.id) })));
+        .map(w => ({ ...w, sets: db.sets.filter(s => s.workout_id === w.id), reactions: db.reactions.filter(r => r.workout_id === w.id), comments: db.comments.filter(r => r.workout_id === w.id) })));
     },
     async bestLifts() {
       const best = new Map();
@@ -149,6 +168,21 @@ function demoApi() {
       db.plans.push(x); save(); return wait(x);
     },
     async deletePlan(pid) { db.plans = db.plans.filter(p => p.id !== pid); save() },
+    async updateWorkout(wid, patch) { Object.assign(db.workouts.find(w => w.id === wid), patch); save() },
+    async updateSet(sid, patch) { Object.assign(db.sets.find(s => s.id === sid), patch); save() },
+    async userWorkouts(uid) { return wait(db.workouts.filter(w => w.user_id === uid).sort((a, b) => a.started_at.localeCompare(b.started_at))) },
+    async userSets(uid) { return wait(db.sets.filter(s => s.user_id === uid)) },
+    async weekWorkouts(since) { return wait(db.workouts.filter(w => w.ended_at && w.started_at >= since).map(w => ({ user_id: w.user_id, started_at: w.started_at }))) },
+    async exerciseSets(exercise, uids) { return wait(db.sets.filter(s => s.exercise === exercise && uids.includes(s.user_id))) },
+    async react(workout_id, kind) { if (!db.reactions.some(r => r.workout_id === workout_id && r.kind === kind && r.user_id === me())) db.reactions.push({ workout_id, kind, user_id: me() }); save() },
+    async unreact(workout_id, kind) { db.reactions = db.reactions.filter(r => !(r.workout_id === workout_id && r.kind === kind && r.user_id === me())); save() },
+    async comment(workout_id, body) { const r = { id: id(), workout_id, user_id: me(), body, created_at: new Date().toISOString() }; db.comments.push(r); save(); return wait(r) },
+    async deleteComment(cid) { db.comments = db.comments.filter(c => c.id !== cid); save() },
+    async challenges() { return wait(db.challenges.map(c => ({ ...c, challenge_members: db.members.filter(m => m.challenge_id === c.id) })).sort((a, b) => b.ends_on.localeCompare(a.ends_on))) },
+    async createChallenge(ch) { const r = { id: id(), created_by: me(), created_at: new Date().toISOString(), ...ch }; db.challenges.push(r); db.members.push({ challenge_id: r.id, user_id: me() }); save(); return wait(r) },
+    async deleteChallenge(cid) { db.challenges = db.challenges.filter(c => c.id !== cid); db.members = db.members.filter(m => m.challenge_id !== cid); save() },
+    async joinChallenge(cid) { if (!db.members.some(m => m.challenge_id === cid && m.user_id === me())) db.members.push({ challenge_id: cid, user_id: me() }); save() },
+    async leaveChallenge(cid) { db.members = db.members.filter(m => !(m.challenge_id === cid && m.user_id === me())); save() },
     async importWorkouts(list, onProgress) {
       const existing = new Set(db.workouts.filter(w => w.user_id === me()).map(w => w.started_at));
       const fresh = list.filter(w => !existing.has(w.started_at));

@@ -183,3 +183,72 @@ export function adjustAfterSet(rows, j, cfg) {
   }
   return hint ?? null;
 }
+
+// ---------- Wochen & Streak ----------
+// Montag der Woche als "JJJJ-MM-TT" (lokale Zeit)
+export function weekKey(d) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+}
+// dates: Startzeiten der Trainings einer Person; Streak = Wochen in Folge mit erreichtem Ziel.
+// Die laufende Woche zählt mit, sobald das Ziel erreicht ist, bricht die Serie aber nicht, solange sie läuft.
+export function streak(dates, goal, now = new Date()) {
+  const per = new Map();
+  for (const d of dates) { const k = weekKey(d); per.set(k, (per.get(k) || 0) + 1) }
+  const cur = new Date(now); const thisWeek = per.get(weekKey(cur)) || 0;
+  let n = thisWeek >= goal ? 1 : 0;
+  const w = new Date(cur); w.setDate(w.getDate() - 7);
+  while ((per.get(weekKey(w)) || 0) >= goal) { n++; w.setDate(w.getDate() - 7) }
+  return { streak: n, thisWeek };
+}
+
+// ---------- Challenges ----------
+// sets: [{user_id, weight, reps, performed_at}]; Gewinn = bestes 1RM im Zeitraum minus bestes 1RM davor
+// (ohne Vorher-Wert zählt die erste Einheit im Zeitraum als Ausgangswert)
+export function challengeStandings(ch, sets, memberIds) {
+  const start = new Date(ch.starts_on + "T00:00:00"), end = new Date(ch.ends_on + "T23:59:59");
+  return memberIds.map(uid => {
+    const mine = sets.filter(s => s.user_id === uid && s.reps <= 15);
+    const before = mine.filter(s => new Date(s.performed_at) < start);
+    const inside = mine.filter(s => { const d = new Date(s.performed_at); return d >= start && d <= end })
+      .sort((a, b) => new Date(a.performed_at) - new Date(b.performed_at));
+    const best = list => list.length ? Math.max(...list.map(s => e1rm(+s.weight, +s.reps))) : null;
+    let base = best(before);
+    if (base == null && inside.length) { const first = inside[0].performed_at.slice(0, 10); base = best(inside.filter(s => s.performed_at.slice(0, 10) === first)) }
+    const now = best(inside);
+    const kg = base != null && now != null ? now - base : null;
+    const pct = kg != null && base > 0 ? kg / base * 100 : null;
+    return { user_id: uid, base, now, kg, pct, score: ch.metric === "gain_kg" ? kg : pct };
+  }).sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+}
+
+// ---------- Diagramm mit Achsen ----------
+// points: [{d: Date, v: number}] → SVG mit y-Achse (kg) und erstem/letztem Datum
+export function chartSVG(points, W = 340, H = 170) {
+  if (points.length < 2) return "";
+  const padL = 40, padR = 12, padT = 12, padB = 26;
+  const vs = points.map(p => p.v), lo0 = Math.min(...vs), hi0 = Math.max(...vs);
+  const step = niceStep((hi0 - lo0 || hi0 * 0.1 || 1) / 3);
+  const lo = Math.floor(lo0 / step) * step, hi = Math.ceil(hi0 / step) * step || lo + step;
+  const t0 = +points[0].d, t1 = +points[points.length - 1].d, span = t1 - t0 || 1;
+  const x = d => padL + (+d - t0) / span * (W - padL - padR);
+  const y = v => padT + (1 - (v - lo) / (hi - lo || 1)) * (H - padT - padB);
+  const ticks = []; for (let v = lo; v <= hi + 1e-9; v += step) ticks.push(v);
+  const line = points.map((p, i) => (i ? "L" : "M") + x(p.d).toFixed(1) + " " + y(p.v).toFixed(1)).join(" ");
+  const last = points[points.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Verlauf geschätztes 1RM">
+    ${ticks.map(v => `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+      <text x="${padL - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="var(--mono)">${fmtW(v)}</text>`).join("")}
+    <path d="${line} L${x(last.d).toFixed(1)} ${y(lo)} L${padL} ${y(lo)}Z" fill="var(--accent)" fill-opacity=".12"/>
+    <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    ${points.map(p => `<circle cx="${x(p.d).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="2.2" fill="var(--accent)"/>`).join("")}
+    <circle cx="${x(last.d).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+    <text x="${padL}" y="${H - 6}" fill="var(--muted)" font-size="11" font-family="var(--mono)">${fmtD(points[0].d)}</text>
+    <text x="${W - padR}" y="${H - 6}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="var(--mono)">${fmtD(last.d)}</text>
+  </svg>`;
+}
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+}

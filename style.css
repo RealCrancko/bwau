@@ -129,3 +129,39 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;padding:4px 0}
 .p25{background:#c0392b;--h:30px}.p20{background:#2c5f93;--h:28px}.p15{background:#c9a227;--h:26px;color:#14181d!important}.p10{background:#2f7d4a;--h:24px}
 .p5{background:#5b6570;--h:20px}.p2{background:#7a838d;--h:18px}.p1{background:#9aa2ab;--h:16px}
 .chip i,.btn i,.link i{font-size:1.05em;vertical-align:-2px}
+
+/* Unterseiten */
+.back{align-self:flex-start;text-decoration:none;color:var(--muted);margin-bottom:-6px}
+.h1s{font-size:1.7rem;line-height:1.05}
+a{color:inherit}
+h3 a,.lifts a,.comments a,a.who{text-decoration:none}
+h3 a:hover,.lifts a:hover{text-decoration:underline;text-underline-offset:3px}
+a.rank,a.weekrow{text-decoration:none;color:inherit}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stats div{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:10px 12px;display:flex;flex-direction:column;min-width:0}
+.stats b{font:800 1.6rem/1 var(--display)}
+.stats span{font-size:.75rem;color:var(--muted)}
+
+/* Wochenziel */
+.pips{display:flex;align-items:center;gap:4px}
+.pips i{width:16px;height:8px;border-radius:2px;background:var(--hold-bg);border:1px solid var(--line)}
+.pips i.on{background:var(--up);border-color:var(--up)}
+.pips span{margin-left:6px}
+.streak{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:var(--stall)}
+.weekrow{display:grid;grid-template-columns:36px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:6px 0}
+.weekrow .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Reaktionen & Kommentare */
+.reacts{display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}
+.react{display:inline-flex;align-items:center;gap:4px;min-height:36px;padding:4px 12px;border-radius:999px;border:1px solid var(--line);background:var(--sunk);color:var(--muted);cursor:pointer;font-weight:600;text-decoration:none}
+.react i{font-size:18px}
+.react[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.react:active{transform:translateY(1px)}
+.comments{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+
+/* Meine Trainings */
+.wolist{display:flex;flex-direction:column}
+.wolist a{display:flex;justify-content:space-between;gap:10px;padding:10px 0;text-decoration:none;border-bottom:1px solid var(--line)}
+.wolist a:last-child{border-bottom:none}
+input.gone{text-decoration:line-through;opacity:.45}
+@media (max-width:420px){.stats b{font-size:1.3rem}}
