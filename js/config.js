@@ -1,4 +1,5 @@
-// Aus Supabase: Project Settings → API (Project URL und anon/public key).
+// Aus Supabase: Project URL und Publishable key (Project Settings → API Keys).
 // Leer lassen = Demo-Modus, die Daten bleiben dann nur in diesem Browser.
-export const SUPABASE_URL = "";
-export const SUPABASE_ANON_KEY = "";
+// Niemals den Secret-/service_role-Key hier eintragen.
+export const SUPABASE_URL = "https://xftyxkxbbjldfmupvjdf.supabase.co";
+export const SUPABASE_ANON_KEY = "sb_publishable_a3ddjv5WH_J0wvYAvSJc3A_sgsHUsCK";
