@@ -40,4 +40,14 @@ node tools/serve.mjs
 
 Dann http://localhost:5173 öffnen.
 
+## Update hochladen
+
+```bash
+node tools/bump.mjs
+git commit -am "Beschreibung der Änderung"
+git push
+```
+
+`bump.mjs` hängt eine neue Versionsnummer an die Datei-Links, damit Browser nach dem Update nicht die alten Dateien aus dem Cache nehmen.
+
 
