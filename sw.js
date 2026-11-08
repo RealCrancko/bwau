@@ -13,6 +13,7 @@ self.addEventListener("push", e => {
     badge: "icon-180.png",
     tag: "bwau-rest",
     renotify: true,
+    silent: false,
   }));
 });
 

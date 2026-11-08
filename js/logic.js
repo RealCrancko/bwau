@@ -252,3 +252,93 @@ function niceStep(raw) {
   const p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
 }
+
+// ---------- Alpha Progression ----------
+// Gleiche Übung, anderer Name: Damit Verlauf und Rangliste mit den BWAU-Namen zusammenpassen
+const AP_ALIASES = {
+  "Beinpresse (Maschine)": "Beinpresse",
+  "Beinbeugen im Sitzen (Maschine)": "Beinbeuger sitzend (Maschine)",
+  "Beinstrecken (Maschine)": "Beinstrecker (Maschine)",
+  "Wadenheben im Stehen (Maschine)": "Wadenheben stehend (Maschine)",
+  "Preacher Curls (Maschine)": "Preacher Curl (Maschine)",
+  "Brustpresse (Maschine)": "Bankdrücken (Maschine)",
+  "Schulterpresse (Maschine)": "Schulterdrücken (Maschine)",
+};
+function apExercise(cell) {
+  const m = /^\d+\.\s*(.+?)\s+·\s+(.+?)(?:\s+·\s+(\d+)\s*Wdh)?$/.exec(cell || "");
+  if (!m) return null;
+  const raw = m[2] === "-" ? m[1] : `${m[1]} (${m[2]})`;
+  return { exercise: AP_ALIASES[raw] ?? normName(raw), target: m[3] ? +m[3] : null };
+}
+function apCells(line, d) {
+  const out = []; let f = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { f += '"'; i++ } else q = false } else f += c }
+    else if (c === '"') q = true;
+    else if (c === d) { out.push(f.trim()); f = "" }
+    else f += c;
+  }
+  out.push(f.trim());
+  return out;
+}
+const AP_DATE = /^(\d{4})-(\d{2})-(\d{2}) (\d{1,2}):(\d{2}) Uhr$/;
+const apDate = s => { const m = AP_DATE.exec(s || ""); return m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) };
+function apMinutes(s) {
+  let m = /^(\d+):(\d{2}) Std/.exec(s || ""); if (m) return +m[1] * 60 + +m[2];
+  m = /^(\d+) Std/.exec(s || ""); if (m) return +m[1] * 60;
+  m = /^(\d+) Min/.exec(s || ""); return m ? +m[1] : null;
+}
+
+// Text → {workouts, plans:[{name, items}], bodyweight, targets: Map(Übung → Ziel-Wdh. der neuesten Einheit)}
+export function parseAlphaProgression(text) {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  const header = lines.find(l => /^"?#"?[\t,;]"?KG"?/.test(l));
+  // Die vier Teile kommen einzeln: Ohne Satz-Tabelle das Trennzeichen aus dem Text ablesen
+  const d = header ? header.replace(/^"?#"?/, "")[0] : text.includes("\t") ? "\t" : /"\s*;|;\s*"/.test(text) ? ";" : ",";
+  const workouts = [], plans = [], targets = new Map(), exercises = [];
+  let bodyweight = null, section = null, wo = null, ex = null, plan = null, setCount = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const c = apCells(line, d);
+    if (/^Körpergewicht$/i.test(c[0]) || (c[0] === "DATUM" && c[1] === "KG")) { section = "body"; continue }
+    if (c[0] === "NAME" && c[1] === "EQUIPMENT") { section = "exercises"; continue }
+    const start = apDate(c[1]);
+    if (start && c[0].includes(" · ")) {
+      const mins = apMinutes(c[2]);
+      wo = { title: c[0].split(" · ")[0], started_at: start.toISOString(), ended_at: new Date(+start + (mins ?? 0) * 60000).toISOString(), source: "alpha", sets: [] };
+      workouts.push(wo); section = "workout"; ex = null; plan = null;
+      continue;
+    }
+    const at = apDate(c[0]);
+    if (at) {
+      const kg = parseFloat(String(c[1]).replace(",", "."));
+      if (kg > 0 && (!bodyweight || at > bodyweight.at)) bodyweight = { at, kg };
+      section = "body";
+      continue;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(c[1] || "")) { section = "plan"; plan = null; continue }
+    if (section === "exercises") {
+      const e = c[1] ? apExercise(`0. ${c[0]} · ${c[1]}`) : null;
+      if (e) exercises.push(e.exercise);
+      continue;
+    }
+    if (section === "plan") {
+      const e = apExercise(c[0]), n = /^(\d+)\s*Sätze?$/.exec(c[1] || "");
+      if (e && n) { plan?.items.push({ exercise: e.exercise, sets: +n[1] }) }
+      else if (c.length === 1 && c[0].includes(" · ")) { plan = { name: c[0].split(" · ")[0], items: [] }; plans.push(plan) }
+      continue;
+    }
+    if (section !== "workout") continue;
+    const e = apExercise(c[0]);
+    if (e) { ex = e; setCount = 0; if (e.target && !(targets.get(e.exercise)?.at > wo.started_at)) targets.set(e.exercise, { target: e.target, at: wo.started_at }); continue }
+    if (ex && /^\d+$/.test(c[0])) {
+      const w = parseFloat(String(c[1]).replace(",", ".")), r = parseInt(c[2], 10);
+      if (w >= 0 && r > 0) wo.sets.push({ exercise: ex.exercise, set_index: setCount++, weight: w, reps: r });
+    }
+  }
+  const latest = new Map();
+  for (const [name, t] of targets) latest.set(name, t.target);
+  const ordered = workouts.filter(w => w.sets.length).sort((a, b) => a.started_at.localeCompare(b.started_at));
+  return { workouts: ordered, plans: plans.filter(p => p.items.length), bodyweight, exercises, targets: latest };
+}

@@ -165,3 +165,14 @@ a.rank,a.weekrow{text-decoration:none;color:inherit}
 .wolist a:last-child{border-bottom:none}
 input.gone{text-decoration:line-through;opacity:.45}
 @media (max-width:420px){.stats b{font-size:1.3rem}}
+
+/* Muskeln & Videos */
+.mline{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.mline a{white-space:nowrap;color:var(--accent);text-decoration:none;font-weight:600;margin-left:auto}
+.mchips{display:flex;flex-wrap:wrap;gap:6px}
+.mchip{padding:3px 10px;border-radius:999px;font-size:.85rem;background:var(--hold-bg);color:var(--hold)}
+.mchip.main{background:var(--accent);color:var(--accent-ink);font-weight:600}
+textarea{background:var(--sunk);border:1px solid var(--line);border-radius:var(--r-ctl);padding:10px 12px;font-size:16px;width:100%;resize:vertical}
+textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.importlog{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.importlog i{color:var(--up)}

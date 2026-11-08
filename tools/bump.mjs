@@ -6,7 +6,7 @@ const files = ["index.html", "js/app.js", "js/api.js"];
 for (const f of files) {
   const s = fs.readFileSync(f, "utf8")
     .replace(/((?:src|href)="(?:js\/app\.js|style\.css|manifest\.webmanifest))(?:\?v=\w+)?"/g, `$1?v=${v}"`)
-    .replace(/(from "\.\/(?:api|logic|config)\.js)(?:\?v=\w+)?"/g, `$1?v=${v}"`);
+    .replace(/(from "\.\/(?:api|logic|config|muscles)\.js)(?:\?v=\w+)?"/g, `$1?v=${v}"`);
   fs.writeFileSync(f, s);
 }
 console.log("Version", v);

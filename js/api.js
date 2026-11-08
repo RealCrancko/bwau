@@ -1,6 +1,6 @@
 // Datenzugriff: Supabase, oder ein Demo-Speicher im Browser, solange config.js leer ist.
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw132qyd";
-import { nameToEmail, pinToPassword } from "./logic.js?v=mw132qyd";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js?v=mw5gm7xe";
+import { nameToEmail, pinToPassword } from "./logic.js?v=mw5gm7xe";
 
 export const DEMO = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
@@ -108,7 +108,7 @@ function supabaseApi(sb) {
       let done = 0;
       for (let i = 0; i < fresh.length; i += 50) {
         const chunk = fresh.slice(i, i + 50);
-        const rows = must(await sb.from("workouts").insert(chunk.map(w => ({ title: w.title, started_at: w.started_at, ended_at: w.ended_at, source: "hevy" }))).select("id,started_at"));
+        const rows = must(await sb.from("workouts").insert(chunk.map(w => ({ title: w.title, started_at: w.started_at, ended_at: w.ended_at, source: w.source || "hevy" }))).select("id,started_at"));
         const ids = new Map(rows.map(r => [new Date(r.started_at).toISOString(), r.id]));
         const sets = chunk.flatMap(w => w.sets.map(s => ({ ...s, workout_id: ids.get(w.started_at), performed_at: w.started_at })));
         for (let j = 0; j < sets.length; j += 500) must(await sb.from("sets").insert(sets.slice(j, j + 500)));
@@ -203,7 +203,7 @@ function demoApi() {
       const fresh = list.filter(w => !existing.has(w.started_at));
       for (const w of fresh) {
         const wid = id();
-        db.workouts.push({ id: wid, user_id: me(), title: w.title, started_at: w.started_at, ended_at: w.ended_at, source: "hevy" });
+        db.workouts.push({ id: wid, user_id: me(), title: w.title, started_at: w.started_at, ended_at: w.ended_at, source: w.source || "hevy" });
         for (const s of w.sets) db.sets.push({ id: id(), user_id: me(), workout_id: wid, performed_at: w.started_at, ...s });
       }
       save(); onProgress?.(fresh.length, fresh.length);

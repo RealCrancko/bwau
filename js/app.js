@@ -1,10 +1,22 @@
-import { createApi, DEMO } from "./api.js?v=mw132qyd";
-import { VAPID_PUBLIC } from "./config.js?v=mw132qyd";
-import * as L from "./logic.js?v=mw132qyd";
+import { createApi, DEMO } from "./api.js?v=mw5gm7xe";
+import { VAPID_PUBLIC } from "./config.js?v=mw5gm7xe";
+import { musclesFor, videoUrl } from "./muscles.js?v=mw5gm7xe";
+import * as L from "./logic.js?v=mw5gm7xe";
 
 const $ = s => document.querySelector(s);
 const view = $("#view");
 const esc = L.esc;
+const muscleLine = ex => {
+  const m = musclesFor(ex);
+  return `<p class="mline small">${m ? `<span><b>${m.primary.map(esc).join(", ")}</b>${m.secondary.length ? ` <span class="muted">+ ${m.secondary.map(esc).join(", ")}</span>` : ""}</span>` : ""}<a href="${esc(videoUrl(ex))}" target="_blank" rel="noopener"><i class="ph ph-play-circle"></i> Ausführung</a></p>`;
+};
+const muscleCard = ex => {
+  const m = musclesFor(ex);
+  return `<div class="card"><h3>Muskeln</h3>
+    ${m ? `<div class="mchips">${m.primary.map(x => `<span class="mchip main">${esc(x)}</span>`).join("")}${m.secondary.map(x => `<span class="mchip">${esc(x)}</span>`).join("")}</div>
+    <p class="small muted">Kräftig markiert: Hauptmuskeln. Die anderen arbeiten mit.</p>` : '<p class="small muted">Zu dieser Übung sind keine Muskeln hinterlegt.</p>'}
+    <a class="btn quiet" href="${esc(videoUrl(ex))}" target="_blank" rel="noopener" style="align-self:flex-start;text-decoration:none"><i class="ph ph-play-circle"></i>Ausführungsvideos</a></div>`;
+};
 const nSets = n => n === 1 ? "1 Satz" : `${n} Sätze`;
 const nTrain = n => n === 1 ? "1 Training" : `${n} Trainings`;
 
@@ -13,7 +25,7 @@ const S = {
   me: null, profile: null, profiles: [], workouts: [], sets: [], settings: new Map(), custom: [], plans: [],
   feed: null, best: null, feedMine: false, lbEx: null, progTab: null, openSettings: null,
   editPlan: null, confirm: null, error: null, importMsg: null, loading: false,
-  people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
+  importLog: [], people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
   lbMode: "best", challenges: null, chData: {}, newCh: false, showAllWo: false,
 };
 let api;
@@ -185,7 +197,8 @@ function workoutView() {
     const rec = recFor(it.exercise, h);
     const last = rec?.last;
     return `<section class="card ${rec ? "k " + rec.kind : ""}">
-      <div class="spread"><h3>${esc(it.exercise)}</h3>${rec ? `<span class="chip ${rec.kind}">${chipIcon(rec.kind)}${rec.label}</span>` : '<span class="chip">Neu</span>'}</div>
+      <div class="spread"><h3><a href="${exLink(S.me, it.exercise)}">${esc(it.exercise)}</a></h3>${rec ? `<span class="chip ${rec.kind}">${chipIcon(rec.kind)}${rec.label}</span>` : '<span class="chip">Neu</span>'}</div>
+      ${muscleLine(it.exercise)}
       ${last ? `<p class="lastline num">Zuletzt ${L.fmtD(last.d)}: ${last.sets.map(s => `${L.fmtW(s.w)}×${s.r}`).join(", ")}</p>` : '<p class="small muted">Noch kein Verlauf. Trag einfach ein, was du schaffst.</p>'}
       ${rec ? `<div class="target"><span class="big num">${L.fmtW(rec.w)}<small>kg</small></span><span class="small"><b>${rec.goal}</b></span>${platesHTML(it.exercise, rec.w)}</div>` : ""}
       ${rec?.note ? `<p class="note">${esc(rec.note)}</p>` : ""}
@@ -270,6 +283,8 @@ function unlockAudio() {
 function beep() {
   if (!audio) return;
   try {
+    // Kurzer Ton, der laufende Musik nach Möglichkeit nur kurz leiser macht (Safari 16.4+)
+    if (navigator.audioSession) { navigator.audioSession.type = "transient"; setTimeout(() => { navigator.audioSession.type = "auto" }, 1500) }
     audio.resume?.();
     [0, 0.22, 0.44].forEach((t, k) => {
       const o = audio.createOscillator(), g = audio.createGain();
@@ -460,10 +475,13 @@ function profileView() {
     ${pushCard()}
     ${myWorkoutsCard()}
     <div class="card">
-      <h2>Hevy-Daten importieren</h2>
-      <p class="small muted">In Hevy unter Profil, Einstellungen, Daten exportieren die CSV holen und hier auswählen. Schon importierte Trainings werden übersprungen.</p>
-      <label class="btn quiet" for="hevyFile" style="align-self:flex-start"><i class="ph ph-upload-simple"></i>CSV auswählen<input id="hevyFile" type="file" accept=".csv,text/csv" hidden></label>
+      <h2>Daten importieren</h2>
+      <p class="small muted">Hevy: die CSV auswählen. Alpha Progression: Körpergewicht, Übungen, Plan und Trainings einzeln kopieren und nacheinander hier einfügen, die Reihenfolge ist egal. Schon importierte Trainings werden übersprungen.</p>
+      <label class="btn quiet" for="hevyFile" style="align-self:flex-start"><i class="ph ph-upload-simple"></i>Dateien auswählen<input id="hevyFile" type="file" multiple accept=".csv,.txt,text/csv,text/plain" hidden></label>
+      <label class="field" for="importText">Oder Text einfügen<textarea id="importText" rows="3" autocomplete="off"></textarea></label>
+      <button class="btn quiet" data-act="importPaste" style="align-self:flex-start">Text importieren</button>
       ${S.importMsg ? `<p class="small" role="status">${esc(S.importMsg)}</p>` : ""}
+      ${S.importLog.length ? `<ul class="importlog small">${S.importLog.map(x => `<li><i class="ph ph-check"></i> ${esc(x)}</li>`).join("")}</ul>` : ""}
     </div>
     <form class="card" id="pinForm">
       <h2>PIN ändern</h2>
@@ -485,15 +503,36 @@ function myWorkoutsCard() {
     <div class="wolist">${shown.map(w => `<a href="#workout/${w.id}"><span>${esc(w.title)} <span class="small muted">${L.fmtDT(w.started_at)}</span></span><span class="small muted num">${nSets(count(w.id))} <i class="ph ph-pencil-simple"></i></span></a>`).join("")}</div>
     ${list.length > 8 ? `<button class="link" data-act="showAllWo">${S.showAllWo ? "Weniger anzeigen" : `Alle ${list.length} anzeigen`}</button>` : ""}</div>`;
 }
-async function importHevy(file) {
-  S.importMsg = "Lese Datei …"; render();
+async function importData(getText) {
+  S.importMsg = "Lese Daten …"; render();
   await guard(async () => {
-    const text = await file.text();
-    const list = L.hevyToWorkouts(L.parseCSV(text));
-    if (!list.length) throw new Error("In der Datei wurden keine Sätze mit Gewicht und Wiederholungen gefunden.");
-    const res = await api.importWorkouts(list, (d, t) => { S.importMsg = `Importiere ${d} von ${t} Trainings …`; render() });
+    const text = await getText();
+    const hevy = /exercise_title/.test(text.slice(0, 2000));
+    const ap = hevy ? null : L.parseAlphaProgression(text);
+    const list = hevy ? L.hevyToWorkouts(L.parseCSV(text)) : ap.workouts;
+    if (!list.length && !(ap && (ap.plans.length || ap.bodyweight || ap.exercises.length)))
+      throw new Error("Das Format wurde nicht erkannt oder es stehen keine Daten darin. Unterstützt: Hevy und die vier Teile von Alpha Progression.");
+    const parts = [];
+    if (list.length) {
+      const res = await api.importWorkouts(list, (d, t) => { S.importMsg = `Importiere ${d} von ${t} Trainings …`; render() });
+      parts.push(res.added ? `${res.added} Trainings importiert${res.skipped ? `, ${res.skipped} waren schon da` : ""}` : "Alle Trainings waren schon da");
+    }
+    if (ap) {
+      // Wiederholungsziele aus dem Export übernehmen, eigene Einstellungen bleiben unangetastet
+      for (const [ex, target] of ap.targets) if (!S.settings.has(ex)) await api.saveSetting(ex, { rep_min: Math.max(1, target - 2), rep_max: target, step: null });
+      let newPlans = 0, newEx = 0;
+      for (const p of ap.plans) if (!S.plans.some(x => x.user_id === S.me && x.name === p.name)) { await api.savePlan({ name: p.name, items: p.items, shared: false }); newPlans++ }
+      for (const ex of new Set(ap.exercises)) if (!allExercises().includes(ex)) { await api.addExercise(ex); newEx++ }
+      if (ap.plans.length) parts.push(newPlans ? `${newPlans} Pläne angelegt` : "Alle Pläne waren schon da");
+      if (ap.exercises.length) parts.push(newEx ? `${newEx} eigene Übungen angelegt` : "Alle Übungen waren schon da");
+      if (ap.bodyweight) {
+        if (S.profile?.bodyweight) parts.push(`Körpergewicht ${L.fmtW(ap.bodyweight.kg)} kg gefunden, dein eingetragener Wert bleibt`);
+        else { await api.updateProfile({ bodyweight: ap.bodyweight.kg }); parts.push(`Körpergewicht ${L.fmtW(ap.bodyweight.kg)} kg übernommen`) }
+      }
+    }
     await loadMine();
-    S.importMsg = res.added ? `${res.added} Trainings importiert${res.skipped ? `, ${res.skipped} waren schon da` : ""}.` : "Alle Trainings aus der Datei waren schon da.";
+    S.importMsg = null;
+    S.importLog.push(parts.join(", ") + ".");
     render();
   });
   if (S.error) { S.importMsg = null; render() }
@@ -520,7 +559,7 @@ function exerciseView(uid, ex) {
   if (!d) return `${backLink("fortschritt")}<p class="muted">Lädt …</p>`;
   const h = L.historyByExercise(d.sets, new Map(d.workouts.map(w => [w.id, w])), uid === S.me ? active?.workoutId : undefined);
   const e = h.get(ex);
-  if (!e) return `${backLink("fortschritt")}<h1 class="h1s">${esc(ex)}</h1><div class="empty">Zu dieser Übung gibt es noch keine Sätze.</div>`;
+  if (!e) return `${backLink("fortschritt")}<h1 class="h1s">${esc(ex)}</h1>${muscleCard(ex)}<div class="empty">Zu dieser Übung gibt es noch keine Sätze.</div>`;
   let best = 0; const prs = [];
   for (const s of e.sessions) if (s.e1 > best + 0.01) { best = s.e1; prs.push(s) }
   let top = null;
@@ -536,6 +575,7 @@ function exerciseView(uid, ex) {
     </div>
     ${rec ? `<div class="card k ${rec.kind}"><div class="spread"><h3>Nächstes Mal</h3><span class="chip ${rec.kind}">${chipIcon(rec.kind)}${rec.label}</span></div>
       <div class="target"><span class="big num">${L.fmtW(rec.w)}<small>kg</small></span><span class="small"><b>${rec.goal}</b></span>${platesHTML(ex, rec.w)}</div></div>` : ""}
+    ${muscleCard(ex)}
     ${e.sessions.length > 1 ? `<div class="card"><h3>Verlauf</h3>${L.chartSVG(e.sessions.map(s => ({ d: s.d, v: s.e1 })))}<p class="small muted">Geschätztes 1RM pro Einheit</p></div>` : ""}
     <div class="card"><h3>Rekorde</h3><div class="lifts num">${prs.slice().reverse().slice(0, 6).map(s => `<span>${L.fmtD(s.d)}</span><span>ca. ${Math.round(s.e1)} kg</span>`).join("")}</div></div>
     <div class="card"><h3>Alle Einheiten</h3><div class="lifts num">${e.sessions.slice().reverse().map(s => `<span>${L.fmtD(s.d)} <span class="muted small">${esc(s.title)}</span></span><span>${s.sets.map(x => `${L.fmtW(x.w)}×${x.r}`).join(", ")}</span>`).join("")}</div></div>`;
@@ -757,6 +797,7 @@ function pushCard() {
     ? `<p class="small muted">Dieses Gerät unterstützt keine Benachrichtigungen. Auf dem iPhone braucht es mindestens iOS 16.4.</p>`
     : `<p class="small muted">Öffne BWAU über das Icon auf deinem Home-Bildschirm. Nur dort erlaubt das iPhone Benachrichtigungen.</p>`;
   else if (pushOn()) body = `<p class="small muted">Aktiv auf diesem Gerät. Wenn die Pause vorbei ist, kommt eine Mitteilung, auch bei gesperrtem Handy.</p>
+      <p class="small muted">Für den Ton auf den Kopfhörern: iPhone-Einstellungen, Mitteilungen, BWAU, dann „Töne“ einschalten.</p>
       <div class="row"><button class="btn quiet" data-act="pushTest"><i class="ph ph-bell-ringing"></i>Test senden</button><button class="link" data-act="pushOff" style="color:var(--muted)">Ausschalten</button></div>`;
   else body = `<p class="small muted">Bekomm eine Mitteilung, wenn die Pause vorbei ist, auch wenn das Handy gesperrt ist.</p>
       <button class="btn" data-act="pushOn" style="align-self:flex-start" ${S.pushMsg ? "disabled" : ""}><i class="ph ph-bell"></i>${S.pushMsg || "Aktivieren"}</button>`;
@@ -827,6 +868,11 @@ document.addEventListener("click", async ev => {
       w.comments = w.comments.filter(c => c.id !== id); render();
       return guard(() => api.deleteComment(id));
     }
+    case "importPaste": {
+      const text = $("#importText").value;
+      if (!text.trim()) { toast("Füg zuerst den kopierten Text ein."); return }
+      return importData(() => text);
+    }
     case "showAllWo": S.showAllWo = !S.showAllWo; return render();
     case "ewDel": { const g = S.editWo.groups[+b.dataset.g], r = g.rows[+b.dataset.k]; if (!r.id) g.rows.splice(+b.dataset.k, 1); else r.del = !r.del; return render() }
     case "ewAddRow": { const g = S.editWo.groups[+b.dataset.g], last = g.rows.at(-1); g.rows.push({ id: null, w: last ? last.w : "", r: "", del: false }); return render() }
@@ -851,7 +897,7 @@ document.addEventListener("input", ev => {
 document.addEventListener("change", async ev => {
   const t = ev.target;
   if (t.id === "lbEx") { S.lbEx = t.value; return render() }
-  if (t.id === "hevyFile" && t.files[0]) return importHevy(t.files[0]);
+  if (t.id === "hevyFile" && t.files.length) { for (const file of [...t.files]) await importData(() => file.text()); return }
   const box = t.closest(".settings");
   if (box && t.dataset.s) {
     const ex = decodeURIComponent(box.dataset.ex), v = parseFloat(t.value);
