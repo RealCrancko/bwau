@@ -1,7 +1,7 @@
-import { createApi, DEMO } from "./api.js?v=mwl1kxdh";
-import { VAPID_PUBLIC } from "./config.js?v=mwl1kxdh";
-import { musclesFor, videoUrl } from "./muscles.js?v=mwl1kxdh";
-import * as L from "./logic.js?v=mwl1kxdh";
+import { createApi, DEMO } from "./api.js?v=mwl20k1e";
+import { VAPID_PUBLIC } from "./config.js?v=mwl20k1e";
+import { musclesFor, videoUrl } from "./muscles.js?v=mwl20k1e";
+import * as L from "./logic.js?v=mwl20k1e";
 
 const $ = s => document.querySelector(s);
 const view = $("#view");
@@ -34,7 +34,7 @@ const S = {
   me: null, profile: null, profiles: [], workouts: [], sets: [], settings: new Map(), custom: [], plans: [],
   feed: null, best: null, feedMine: false, lbEx: null, progTab: null, openSettings: null,
   editPlan: null, confirm: null, error: null, importMsg: null, loading: false,
-  pendingStart: null, feedOpen: new Set(), importLog: [], people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
+  summary: null, noteEdit: null, pendingStart: null, feedOpen: new Set(), importLog: [], people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
   lbMode: "best", challenges: null, chData: {}, newCh: false, showAllWo: false,
 };
 let api;
@@ -72,7 +72,7 @@ const nameOf = id => S.profiles.find(p => p.id === id)?.name || "Unbekannt";
 const allExercises = () => [...new Set([...L.DEFAULT_EXERCISES, ...S.custom, ...S.sets.map(s => s.exercise)])].sort((a, b) => a.localeCompare(b, "de"));
 function cfgFor(ex) {
   const s = S.settings.get(ex) || {};
-  return { min: s.rep_min ?? S.profile?.rep_min ?? 6, max: s.rep_max ?? S.profile?.rep_max ?? 8, step: s.step ?? undefined, custom: !!S.settings.get(ex) };
+  return { min: s.rep_min ?? S.profile?.rep_min ?? 6, max: s.rep_max ?? S.profile?.rep_max ?? 8, step: s.step ?? undefined, custom: s.rep_min != null || s.rep_max != null || s.step != null, note: s.note || "" };
 }
 function recFor(ex, history) {
   const e = history.get(ex); if (!e || !e.sessions.length) return null;
@@ -103,7 +103,7 @@ function render() {
   const r = route();
   const err = S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : "";
   let html = "";
-  if (r === "training") html = S.editPlan ? planEditor() : active ? workoutView() : S.pendingStart ? dayPickView() : startView();
+  if (r === "training") html = S.editPlan ? planEditor() : active ? workoutView() : S.summary ? summaryView() : S.pendingStart ? dayPickView() : startView();
   else if (r === "fortschritt") html = progressView();
   else if (r === "feed") html = feedView();
   else if (r === "rangliste") html = leaderboardView();
@@ -244,6 +244,7 @@ function workoutView() {
     return `<section class="card ${rec ? "k " + rec.kind : ""}">
       <div class="spread"><h3><a href="${exLink(S.me, it.exercise)}">${esc(it.exercise)}</a></h3>${rec ? `<span class="chip ${rec.kind}">${chipIcon(rec.kind)}${rec.label}</span>` : '<span class="chip">Neu</span>'}</div>
       ${muscleLine(it.exercise)}
+      ${noteHTML(it.exercise)}
       ${last ? `<p class="lastline num">Zuletzt ${L.fmtD(last.d)}: ${last.sets.map(s => `${L.fmtW(s.w)}×${s.r}`).join(", ")}</p>` : '<p class="small muted">Noch kein Verlauf. Trag einfach ein, was du schaffst.</p>'}
       ${rec ? `<div class="target"><span class="big num">${L.fmtW(rec.w)}<small>kg</small></span><span class="small"><b>${rec.goal}</b></span>${platesHTML(it.exercise, rec.w)}</div>` : ""}
       ${rec?.note ? `<p class="note">${esc(rec.note)}</p>` : ""}
@@ -258,7 +259,11 @@ function workoutView() {
       </div>
       <div class="spread">
         <button class="link" data-act="addRow" data-i="${i}"><i class="ph ph-plus"></i> Satz</button>
-        <button class="link" data-act="removeEx" data-i="${i}" style="color:var(--muted)">Übung entfernen</button>
+        <span class="row">
+          <button class="lside sm" data-act="moveEx" data-i="${i}" data-d="-1" aria-label="${esc(it.exercise)} nach oben" ${i === 0 ? "disabled" : ""}><i class="ph ph-arrow-up"></i></button>
+          <button class="lside sm" data-act="moveEx" data-i="${i}" data-d="1" aria-label="${esc(it.exercise)} nach unten" ${i === active.items.length - 1 ? "disabled" : ""}><i class="ph ph-arrow-down"></i></button>
+          <button class="link" data-act="removeEx" data-i="${i}" style="color:var(--muted)">Entfernen</button>
+        </span>
       </div>
     </section>`;
   }).join("");
@@ -306,9 +311,9 @@ async function finishWorkout() {
   if (!n) { S.confirm = "discard"; render(); return }
   await guard(async () => {
     await api.finishWorkout(active.workoutId);
-    const t = active.title; active = null; saveActive(); rest = null; saveRest(); syncRestPush(); releaseAwake();
+    S.summary = buildSummary(active);
+    active = null; saveActive(); rest = null; saveRest(); syncRestPush(); releaseAwake();
     await loadMine(); render(); scrollTo(0, 0);
-    toast(`${t} gespeichert: ${nSets(n)}`);
   });
 }
 async function discardWorkout() {
@@ -503,6 +508,9 @@ function feedView() {
     const recs = rows.filter(s => isRecord(w, s.exercise)).length;
     const open = S.feedOpen.has(w.id), shown = open ? rows : rows.slice(0, 3);
     const muscles = muscleSummary(rows.map(s => s.exercise));
+    // Gerade gestartet, noch kein Satz: nur eine schlanke Zeile statt lauter Nullen
+    if (!rows.length) return `<article class="post slim"><div class="spread"><a class="who" href="#person/${w.user_id}"><span class="av ${avc(w.user_id)}">${initials(nameOf(w.user_id))}</span>
+        <span><b>${esc(nameOf(w.user_id))}</b><span class="small muted">startet ${esc(w.title)}, ${when(w.started_at)}</span></span></a><span class="chip live"><i class="ph ph-record"></i>Trainiert gerade</span></div></article>`;
     return `<article class="post">
       <div class="spread"><a class="who" href="#person/${w.user_id}"><span class="av ${avc(w.user_id)}">${initials(nameOf(w.user_id))}</span>
         <span><b>${esc(nameOf(w.user_id))}</b><span class="small muted">${when(w.started_at)}</span></span></a>
@@ -570,7 +578,7 @@ function profileView() {
         <label class="field" for="prmax" style="width:7em">Wdh. max<input id="prmax" type="number" min="1" max="50" value="${p.rep_max ?? 8}"></label>
         <label class="field" for="prrest" style="width:8em">Pause (Sek.)<input id="prrest" type="number" min="15" max="600" step="15" value="${p.rest_seconds ?? 120}"></label>
         <label class="field" for="prgoal" style="width:8em">Wochenziel<input id="prgoal" type="number" min="1" max="7" value="${p.weekly_goal ?? 3}"></label>
-        <label class="field" for="prbw" style="width:8em">Körpergewicht<input id="prbw" type="number" min="30" max="250" step="0.1" value="${p.bodyweight ?? ""}" placeholder="kg"></label>
+
       </div>
       <p class="small muted">Der Wiederholungsbereich gilt für alle Übungen, außer du stellst ihn unter Fortschritt pro Übung anders ein.</p>
       <button class="btn" type="submit">Speichern</button>
@@ -586,6 +594,10 @@ function profileView() {
       ${S.importMsg ? `<p class="small" role="status">${esc(S.importMsg)}</p>` : ""}
       ${S.importLog.length ? `<ul class="importlog small">${S.importLog.map(x => `<li><i class="ph ph-check"></i> ${esc(x)}</li>`).join("")}</ul>` : ""}
     </div>
+    ${calendarCard()}
+    <div class="card"><h2>Meine Daten</h2>
+      <p class="small muted">Alle deine Sätze als CSV-Datei, zum Beispiel für Excel oder eine andere App.</p>
+      <button class="btn quiet" data-act="exportCsv" style="align-self:flex-start"><i class="ph ph-download-simple"></i>Als CSV exportieren</button></div>
     <form class="card" id="pinForm">
       <h2>PIN ändern</h2>
       <label class="field" for="newPin">Neue PIN (4 bis 6 Ziffern)<input id="newPin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></label>
@@ -618,20 +630,17 @@ async function importData(getText) {
     const parts = [];
     if (list.length) {
       const res = await api.importWorkouts(list, (d, t) => { S.importMsg = `Importiere ${d} von ${t} Trainings …`; render() });
-      parts.push(res.added ? `${res.added} Trainings importiert${res.skipped ? `, ${res.skipped} waren schon da` : ""}` : "Alle Trainings waren schon da");
+      parts.push(res.added ? `${nTrain(res.added)} importiert${res.skipped ? `, ${res.skipped} waren schon da` : ""}` : "Alle Trainings waren schon da");
     }
     if (ap) {
       // Wiederholungsziele aus dem Export übernehmen, eigene Einstellungen bleiben unangetastet
-      for (const [ex, target] of ap.targets) if (!S.settings.has(ex)) await api.saveSetting(ex, { rep_min: Math.max(1, target - 2), rep_max: target, step: null });
+      for (const [ex, target] of ap.targets) if (S.settings.get(ex)?.rep_max == null) await api.saveSetting(ex, { rep_min: Math.max(1, target - 2), rep_max: target, step: null });
       let newPlans = 0, newEx = 0;
       for (const p of ap.plans) if (!S.plans.some(x => x.user_id === S.me && x.name === p.name)) { await api.savePlan({ name: p.name, items: p.items, shared: false }); newPlans++ }
       for (const ex of new Set(ap.exercises)) if (!allExercises().includes(ex)) { await api.addExercise(ex); newEx++ }
-      if (ap.plans.length) parts.push(newPlans ? `${newPlans} Pläne angelegt` : "Alle Pläne waren schon da");
-      if (ap.exercises.length) parts.push(newEx ? `${newEx} eigene Übungen angelegt` : "Alle Übungen waren schon da");
-      if (ap.bodyweight) {
-        if (S.profile?.bodyweight) parts.push(`Körpergewicht ${L.fmtW(ap.bodyweight.kg)} kg gefunden, dein eingetragener Wert bleibt`);
-        else { await api.updateProfile({ bodyweight: ap.bodyweight.kg }); parts.push(`Körpergewicht ${L.fmtW(ap.bodyweight.kg)} kg übernommen`) }
-      }
+      if (ap.plans.length) parts.push(newPlans ? `${newPlans} ${newPlans === 1 ? "Plan" : "Pläne"} angelegt` : "Alle Pläne waren schon da");
+      if (ap.exercises.length) parts.push(newEx ? `${newEx} eigene ${newEx === 1 ? "Übung" : "Übungen"} angelegt` : "Alle Übungen waren schon da");
+      if (ap.bodyweights.length) parts.push("Körpergewicht wird nicht übernommen");
     }
     await loadMine();
     S.importMsg = null;
@@ -679,6 +688,7 @@ function exerciseView(uid, ex) {
     ${rec ? `<div class="card k ${rec.kind}"><div class="spread"><h3>Nächstes Mal</h3><span class="chip ${rec.kind}">${chipIcon(rec.kind)}${rec.label}</span></div>
       <div class="target"><span class="big num">${L.fmtW(rec.w)}<small>kg</small></span><span class="small"><b>${rec.goal}</b></span>${platesHTML(ex, rec.w)}</div></div>` : ""}
     ${muscleCard(ex)}
+    ${uid === S.me ? `<div class="card"><h3>Notiz</h3>${noteHTML(ex)}</div>` : ""}
     ${e.sessions.length > 1 ? `<div class="card"><h3>Verlauf</h3>${L.chartSVG(e.sessions.map(s => ({ d: s.d, v: s.e1 })))}<p class="small muted">Geschätztes 1RM pro Einheit</p></div>` : ""}
     <div class="card"><h3>Rekorde</h3><div class="lifts num">${prs.slice().reverse().slice(0, 6).map(s => `<span>${L.fmtD(s.d)}</span><span>ca. ${Math.round(s.e1)} kg</span>`).join("")}</div></div>
     <div class="card"><h3>Alle Einheiten</h3><div class="lifts num">${e.sessions.slice().reverse().map(s => `<span>${L.fmtD(s.d)} <span class="muted small">${esc(s.title)}</span></span><span>${s.sets.map(x => `${L.fmtW(x.w)}×${x.r}`).join(", ")}</span>`).join("")}</div></div>`;
@@ -748,6 +758,10 @@ function editWorkoutView(id) {
       </div>
       <div class="row"><button class="btn" type="submit">Speichern</button><button type="button" class="btn quiet" data-act="back" data-v="profil">Abbrechen</button></div>
     </form>
+    <div class="row">
+      <button class="btn quiet" data-act="shareWo" data-id="${id}"><i class="ph ph-share-network"></i>Teilen</button>
+      <button class="btn quiet" data-act="planFromWo" data-id="${id}"><i class="ph ph-users-three"></i>Als Plan teilen</button>
+    </div>
     ${S.confirm === "delWo" ? `<div class="card"><p>Training „${esc(e.title)}“ mit allen Sätzen löschen?</p><div class="row"><button class="btn danger" data-act="delWoYes">Löschen</button><button class="btn quiet" data-act="confirmNo">Behalten</button></div></div>`
       : `<button class="link" data-act="delWo" style="color:var(--down)"><i class="ph ph-trash"></i> Training löschen</button>`}`;
 }
@@ -846,6 +860,10 @@ function socialHTML(w) {
       return `<button class="react" data-act="react" data-id="${w.id}" data-v="${k}" aria-pressed="${mine}" aria-label="${label}${who ? ": " + esc(who) : ""}" title="${esc(who)}"><i class="ph ${icon}"></i>${n ? `<span class="num">${n}</span>` : ""}</button>`;
     }).join("")}
     <button class="react" data-act="toggleComment" data-id="${w.id}" aria-expanded="${S.commentOpen === w.id}" aria-label="Kommentieren"><i class="ph ph-chat-circle"></i>${cs.length ? `<span class="num">${cs.length}</span>` : ""}</button>
+    <span class="react-sep"></span>
+    ${w.user_id !== S.me && w.sets.length ? `<button class="react" data-act="copyWo" data-id="${w.id}" aria-label="Dieses Training nachmachen"><i class="ph ph-play"></i>Nachmachen</button>` : ""}
+    ${w.user_id === S.me && w.sets.length ? `<button class="react" data-act="planFromWo" data-id="${w.id}" aria-label="Als Plan mit Freunden teilen"><i class="ph ph-users-three"></i></button>` : ""}
+    ${w.sets.length ? `<button class="react" data-act="shareWo" data-id="${w.id}" aria-label="Training teilen"><i class="ph ph-share-network"></i></button>` : ""}
     ${w.user_id === S.me && w.ended_at ? `<a class="react" href="#workout/${w.id}" aria-label="Training bearbeiten"><i class="ph ph-pencil-simple"></i></a>` : ""}
   </div>
   ${cs.length ? `<div class="comments">${cs.map(c => `<p><a href="#person/${c.user_id}"><b>${esc(nameOf(c.user_id))}</b></a> ${esc(c.body)}${c.user_id === S.me || isAdmin() ? ` <button class="link" data-act="delComment" data-id="${c.id}" data-w="${w.id}" aria-label="Kommentar löschen" style="color:var(--muted);padding:0"><i class="ph ph-x"></i></button>` : ""}</p>`).join("")}</div>` : ""}
@@ -866,6 +884,115 @@ function weekStrip() {
     }).join("")}</div></section>`;
 }
 
+
+// ---------- Notiz pro Übung (bleibt dauerhaft, z. B. Sitzeinstellung) ----------
+function noteHTML(ex) {
+  const note = cfgFor(ex).note;
+  if (S.noteEdit === ex) return `<form class="row noteform" id="noteForm" style="flex-wrap:nowrap">
+      <input id="noteInput" type="text" maxlength="200" value="${esc(note)}" placeholder="z. B. Sitz 3, Griff eng" aria-label="Notiz zu ${esc(ex)}" style="flex:1;min-width:0">
+      <button class="btn" type="submit">Speichern</button><button class="btn quiet" type="button" data-act="noteCancel" aria-label="Abbrechen"><i class="ph ph-x"></i></button></form>`;
+  return note
+    ? `<button class="notebtn" data-act="noteEdit" data-v="${encodeURIComponent(ex)}"><i class="ph ph-note-pencil"></i>${esc(note)}</button>`
+    : `<button class="link small notelink" data-act="noteEdit" data-v="${encodeURIComponent(ex)}"><i class="ph ph-note-pencil"></i> Notiz</button>`;
+}
+
+// ---------- Zusammenfassung nach dem Training ----------
+function buildSummary(a) {
+  const wid = a.workoutId, mine = S.sets.filter(s => s.workout_id === wid);
+  const hist = L.historyByExercise(S.sets, woMap(), wid);
+  const exs = [...new Set(mine.map(s => s.exercise))];
+  const prs = exs.filter(ex => {
+    const e = hist.get(ex); if (!e) return false;
+    const before = Math.max(...e.sessions.map(s => s.e1));
+    const now = Math.max(0, ...mine.filter(s => s.exercise === ex && s.reps <= 15).map(s => L.e1rm(+s.weight, +s.reps)));
+    return now > before + 0.01;
+  });
+  const vol = mine.reduce((t, s) => t + s.weight * s.reps, 0);
+  const prev = [...S.workouts].reverse().find(w => w.id !== wid && w.title === a.title && w.ended_at);
+  const prevVol = prev ? S.sets.filter(s => s.workout_id === prev.id).reduce((t, s) => t + s.weight * s.reps, 0) : null;
+  return { title: a.title, mins: Math.max(1, Math.round((Date.now() - Date.parse(a.startedAt)) / 60000)), sets: mine.length, exercises: exs.length, vol, prevVol, prs };
+}
+const fmtVol = v => v >= 1000 ? `${L.fmtW(Math.round(v / 100) / 10)} t` : `${L.fmtW(Math.round(v))} kg`;
+function summaryView() {
+  const s = S.summary, diff = s.prevVol ? Math.round((s.vol - s.prevVol) / s.prevVol * 100) : null;
+  return `<section class="hero">
+      <span class="hero-k">Geschafft</span>
+      <h2>${esc(s.title)}</h2>
+      <p>${s.exercises === 1 ? "1 Übung" : `${s.exercises} Übungen`} in ${s.mins === 1 ? "1 Minute" : `${s.mins} Minuten`}</p>
+    </section>
+    <div class="kpis sum num">
+      <div><b>${s.sets}</b><span>Sätze</span></div>
+      <div><b>${fmtVol(s.vol)}</b><span>bewegt</span></div>
+      <div><b>${diff == null ? "–" : (diff >= 0 ? "+" : "−") + Math.abs(diff) + " %"}</b><span>${diff == null ? "erstes Mal" : "vs. letztes Mal"}</span></div>
+      <div class="${s.prs.length ? "gold" : ""}"><b>${s.prs.length}</b><span>${s.prs.length === 1 ? "Rekord" : "Rekorde"}</span></div>
+    </div>
+    ${s.prs.length ? `<div class="card"><h3><i class="ph ph-trophy gold-i"></i> Neue Bestleistung</h3><div class="lifts">${s.prs.map(ex => `<span><a href="${exLink(S.me, ex)}">${esc(ex)}</a></span><span></span>`).join("")}</div></div>` : ""}
+    <button class="btn block" data-act="summaryDone">Fertig</button>`;
+}
+
+// ---------- Trainingskalender ----------
+function calendarCard() {
+  const weeks = 16, days = new Set(S.workouts.filter(w => w.ended_at).map(w => new Date(w.started_at).toDateString()));
+  const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - (weeks - 1) * 7);
+  let count = 0, cells = "";
+  for (let wk = 0; wk < weeks; wk++) for (let d = 0; d < 7; d++) {
+    const day = new Date(start); day.setDate(start.getDate() + wk * 7 + d);
+    const on = days.has(day.toDateString()), future = day > new Date();
+    if (on) count++;
+    cells += `<i class="${on ? "on" : ""}${future ? " fut" : ""}" style="grid-column:${wk + 1};grid-row:${d + 1}" title="${day.toLocaleDateString("de-DE")}"></i>`;
+  }
+  return `<div class="card"><div class="spread"><h2>Trainingskalender</h2><span class="small muted num">${count} in ${weeks} Wochen</span></div>
+    <div class="cal" role="img" aria-label="${count} Trainings in den letzten ${weeks} Wochen">${cells}</div>
+    <div class="spread small muted"><span>${L.fmtD(start)}</span><span>heute</span></div></div>`;
+}
+
+// ---------- Trainings teilen ----------
+// Training aus dem Feed oder aus den eigenen Daten, immer mit Sätzen
+function woById(id) {
+  const f = S.feed?.find(w => w.id === id);
+  if (f) return f;
+  const w = S.workouts.find(x => x.id === id);
+  return w && { ...w, user_id: S.me, sets: S.sets.filter(s => s.workout_id === id).sort((a, b) => a.id - b.id) };
+}
+// Übungen in Reihenfolge mit Satzzahl, z. B. für Plan oder Nachmachen
+function woExercises(w) {
+  const out = [];
+  for (const s of w.sets) { const e = out.find(x => x.exercise === s.exercise); e ? e.sets++ : out.push({ exercise: s.exercise, sets: 1 }) }
+  return out;
+}
+async function shareWorkout(w) {
+  if (!w) return;
+  const best = new Map();
+  for (const s of w.sets) { const b = best.get(s.exercise); if (!b || L.e1rm(s.weight, s.reps) > L.e1rm(b.weight, b.reps)) best.set(s.exercise, s) }
+  const mins = w.ended_at ? Math.round((new Date(w.ended_at) - new Date(w.started_at)) / 60000) : null;
+  const who = w.user_id === S.me ? "Mein Training" : `Training von ${nameOf(w.user_id)}`;
+  const text = [`${who}: ${w.title}, ${L.fmtDT(w.started_at)}${mins ? `, ${mins} Min.` : ""}`,
+    ...[...best.values()].map(s => `${s.exercise}: ${L.fmtW(s.weight)} kg × ${s.reps}`),
+    "", "Mit BWAU geloggt: https://realcrancko.github.io/bwau/"].join("\n");
+  try {
+    if (navigator.share) { await navigator.share({ title: w.title, text }); return }
+  } catch (e) { if (e?.name === "AbortError") return }
+  try { await navigator.clipboard.writeText(text); toast("Zusammenfassung kopiert, du kannst sie jetzt einfügen") }
+  catch { toast("Teilen geht in diesem Browser nicht") }
+}
+
+// ---------- Export ----------
+function exportCsv() {
+  const wo = woMap();
+  const cell = v => /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const rows = [["Datum", "Training", "Übung", "Satz", "Gewicht (kg)", "Wiederholungen"]];
+  for (const s of [...S.sets].sort((a, b) => (wo.get(a.workout_id)?.started_at ?? "").localeCompare(wo.get(b.workout_id)?.started_at ?? "") || a.set_index - b.set_index)) {
+    const w = wo.get(s.workout_id);
+    rows.push([w ? new Date(w.started_at).toLocaleString("de-DE") : "", w?.title ?? "", s.exercise, (s.set_index ?? 0) + 1, String(s.weight).replace(".", ","), s.reps]);
+  }
+  // Semikolon und Komma als Dezimaltrenner, damit deutsches Excel die Datei direkt richtig öffnet
+  const blob = new Blob(["﻿" + rows.map(r => r.map(cell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `bwau-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`${nSets(S.sets.length)} exportiert`);
+}
 
 // ---------- Push-Benachrichtigungen ----------
 const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -954,12 +1081,39 @@ document.addEventListener("click", async ev => {
     case "pushTest": return guard(async () => { await api.schedulePush(Date.now() + 10000, "BWAU", "Test: Benachrichtigungen funktionieren."); toast("Kommt in etwa 10 Sekunden. Du kannst das Handy sperren.") });
     case "progTab": S.progTab = b.dataset.v; return render();
     case "openSettings": { const n = decodeURIComponent(b.dataset.v); S.openSettings = S.openSettings === n ? null : n; return render() }
-    case "resetSettings": { const n = decodeURIComponent(b.dataset.v); return guard(async () => { await api.deleteSetting(n); S.settings.delete(n); render() }) }
+    case "resetSettings": {
+      const n = decodeURIComponent(b.dataset.v), cur = S.settings.get(n);
+      // Notiz behalten, nur Bereich und Stufe zurücksetzen
+      return guard(async () => {
+        if (cur?.note) { await api.saveSetting(n, { rep_min: null, rep_max: null, step: null }); S.settings.set(n, { ...cur, rep_min: null, rep_max: null, step: null }) }
+        else { await api.deleteSetting(n); S.settings.delete(n) }
+        render();
+      });
+    }
+    case "noteEdit": S.noteEdit = decodeURIComponent(b.dataset.v); render(); return $("#noteInput")?.focus();
+    case "noteCancel": S.noteEdit = null; return render();
+    case "moveEx": {
+      const k = i + +b.dataset.d; if (k < 0 || k >= active.items.length) return;
+      [active.items[i], active.items[k]] = [active.items[k], active.items[i]]; saveActive(); return render();
+    }
+    case "summaryDone": S.summary = null; render(); return scrollTo(0, 0);
+    case "exportCsv": return exportCsv();
     case "feedMine": S.feedMine = b.dataset.v === "1"; return render();
     case "back": if (S.pendingStart) { S.pendingStart = null; return render() } if (history.length > 1) history.back(); else location.hash = b.dataset.v || "training"; return;
     case "feedOpen": { const id = +b.dataset.id; S.feedOpen.has(id) ? S.feedOpen.delete(id) : S.feedOpen.add(id); return render() }
     case "adminDelWo": S.confirm = "adminDelWo" + b.dataset.id; return render();
     case "adminDelWoYes": return guard(async () => { await api.deleteWorkout(+b.dataset.id); S.confirm = null; S.feed = S.feed.filter(w => w.id !== +b.dataset.id); render(); toast("Training gelöscht") });
+    case "shareWo": return shareWorkout(woById(+b.dataset.id));
+    case "copyWo": { const w = woById(+b.dataset.id); location.hash = "training"; return startWorkout(w.title, woExercises(w)) }
+    case "planFromWo": {
+      const w = woById(+b.dataset.id), items = woExercises(w);
+      const have = S.plans.find(p => p.user_id === S.me && p.name === w.title);
+      return guard(async () => {
+        await api.savePlan(have ? { ...have, items, shared: true } : { name: w.title, items, shared: true });
+        S.plans = await api.plans(); render();
+        toast(have ? `Plan „${w.title}“ aktualisiert und geteilt` : `Plan „${w.title}“ angelegt, deine Freunde sehen ihn jetzt`);
+      });
+    }
     case "pickDay": return beginWorkout(+b.dataset.v);
     case "lbMode": S.lbMode = b.dataset.v; S.confirm = null; return render();
     case "newCh": S.newCh = b.dataset.v === "1"; return render();
@@ -1025,6 +1179,10 @@ document.addEventListener("submit", async ev => {
   const f = ev.target;
   if (f.id === "loginForm") return submitLogin();
   if (f.id === "planForm") return savePlan();
+  if (f.id === "noteForm") {
+    const ex = S.noteEdit, note = $("#noteInput").value.trim().slice(0, 200);
+    return guard(async () => { await api.saveSetting(ex, { note: note || null }); S.settings.set(ex, { ...(S.settings.get(ex) || { exercise: ex }), note: note || null }); S.noteEdit = null; render() });
+  }
   if (f.id === "ewForm") return saveEditWo();
   if (f.id === "chForm") return createChallenge();
   if (f.id === "cform") {
@@ -1042,7 +1200,7 @@ document.addEventListener("submit", async ev => {
   }
   if (f.id === "profileForm") {
     const num = (id, d) => { const v = parseFloat($(id).value); return v > 0 ? v : d };
-    const patch = { rep_min: Math.round(num("#prmin", 6)), rep_max: Math.round(num("#prmax", 8)), rest_seconds: Math.round(num("#prrest", 120)), bodyweight: num("#prbw", null), weekly_goal: Math.min(7, Math.max(1, Math.round(num("#prgoal", 3)))) };
+    const patch = { rep_min: Math.round(num("#prmin", 6)), rep_max: Math.round(num("#prmax", 8)), rest_seconds: Math.round(num("#prrest", 120)), weekly_goal: Math.min(7, Math.max(1, Math.round(num("#prgoal", 3)))) };
     if (patch.rep_min > patch.rep_max) { S.error = "Wdh. min darf nicht größer als Wdh. max sein."; return render() }
     await guard(async () => { await api.updateProfile(patch); Object.assign(S.profile, patch); render(); toast("Gespeichert") });
   }

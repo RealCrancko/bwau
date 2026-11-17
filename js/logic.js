@@ -298,6 +298,7 @@ export function parseAlphaProgression(text) {
   const d = header ? header.replace(/^"?#"?/, "")[0] : text.includes("\t") ? "\t" : /"\s*;|;\s*"/.test(text) ? ";" : ",";
   const workouts = [], plans = [], targets = new Map(), exercises = [];
   let bodyweight = null, section = null, wo = null, ex = null, plan = null, setCount = 0;
+  const bodyweights = [];
   for (const line of lines) {
     if (!line.trim()) continue;
     const c = apCells(line, d);
@@ -313,6 +314,7 @@ export function parseAlphaProgression(text) {
     const at = apDate(c[0]);
     if (at) {
       const kg = parseFloat(String(c[1]).replace(",", "."));
+      if (kg > 0) bodyweights.push({ at, kg });
       if (kg > 0 && (!bodyweight || at > bodyweight.at)) bodyweight = { at, kg };
       section = "body";
       continue;
@@ -340,5 +342,5 @@ export function parseAlphaProgression(text) {
   const latest = new Map();
   for (const [name, t] of targets) latest.set(name, t.target);
   const ordered = workouts.filter(w => w.sets.length).sort((a, b) => a.started_at.localeCompare(b.started_at));
-  return { workouts: ordered, plans: plans.filter(p => p.items.length), bodyweight, exercises, targets: latest };
+  return { workouts: ordered, plans: plans.filter(p => p.items.length), bodyweight, bodyweights, exercises, targets: latest };
 }

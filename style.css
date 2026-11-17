@@ -252,3 +252,25 @@ button.card{border:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .av.u0{background:var(--u0);color:var(--u-ink)}.av.u1{background:var(--u1);color:var(--u-ink)}.av.u2{background:var(--u2);color:var(--u-ink)}
 .av.u3{background:var(--u3);color:var(--u-ink)}.av.u4{background:var(--u4);color:var(--u-ink)}.av.u5{background:var(--u5);color:var(--u-ink)}
 .confirm{background:var(--down-bg);border-radius:var(--r-ctl);padding:12px;display:flex;flex-direction:column;gap:10px}
+
+/* Notiz pro Übung */
+.notebtn{align-self:flex-start;display:inline-flex;gap:6px;align-items:center;background:var(--stall-bg);color:var(--stall);border:0;border-radius:10px;padding:6px 10px;font:600 .88rem var(--body);cursor:pointer;text-align:left}
+.notelink{align-self:flex-start;color:var(--muted);padding:0}
+.lside.sm{width:36px;height:36px;font-size:16px}
+.lside:disabled{opacity:.35;cursor:default}
+
+/* Zusammenfassung */
+.kpis.sum{background:var(--surface);border-radius:var(--r-card);padding:16px}
+
+/* Trainingskalender: Wochen als Spalten, Tage als Zeilen */
+.cal{display:grid;grid-template-columns:repeat(16,1fr);grid-template-rows:repeat(7,auto);gap:4px}
+.cal i{aspect-ratio:1;border-radius:4px;background:var(--sunk);max-width:100%}
+.cal i.on{background:var(--up)}
+.cal i.fut{background:transparent}
+.kpis.sum{grid-template-columns:repeat(2,1fr);gap:16px 12px}
+.kpis.sum b{font-size:1.9rem;white-space:nowrap}
+.react-sep{flex:1}
+.wolist a>span:last-child{white-space:nowrap}
+.post.slim{padding:12px 16px}
+.post .reacts{flex-wrap:nowrap}
+.post .react{padding:4px 8px;min-width:36px;justify-content:center}
