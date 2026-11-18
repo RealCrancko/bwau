@@ -150,7 +150,7 @@ final class TrainingController: UIViewController, WKNavigationDelegate, WKScript
                         }
                     }
                     if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
-                        UIApplication.shared.open(url)
+                        _ = await UIApplication.shared.open(url)
                     }
                     replyHandler("Aktiviere Mitteilungen und Töne für BWAU.", nil)
                 default:
