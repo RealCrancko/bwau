@@ -3,6 +3,8 @@ import { VAPID_PUBLIC } from "./config.js?v=mwl20k1e";
 import { musclesFor, videoUrl } from "./muscles.js?v=mwl20k1e";
 import * as L from "./logic.js?v=mwl20k1e";
 
+import { nativeTimer, iPhoneWeb, shortcutURL, nativePause } from "./iphone-timer.js";
+
 const $ = s => document.querySelector(s);
 const view = $("#view");
 const esc = L.esc;
@@ -47,7 +49,22 @@ const store = {
 let active = store.get("bwau.active");
 let rest = store.get("bwau.rest"); // {end, total}
 const saveActive = () => store.set("bwau.active", active);
-const saveRest = () => store.set("bwau.rest", rest);
+let lastNativeMessage;
+function syncNativePause() {
+  if (!nativeTimer) return;
+  const message = nativePause(rest, active);
+  const key = JSON.stringify(message);
+  if (lastNativeMessage === key) return;
+  lastNativeMessage = key;
+  nativeTimer.postMessage(message).catch(() => {
+    if (lastNativeMessage === key) lastNativeMessage = undefined;
+    toast("iPhone-Timer konnte nicht aktualisiert werden.");
+  });
+}
+function saveRest() {
+  store.set("bwau.rest", rest);
+  syncNativePause();
+}
 
 const parts = () => location.hash.slice(1).split("/").map(p => { try { return decodeURIComponent(p) } catch { return p } });
 const route = () => parts()[0] || "training";
@@ -381,7 +398,7 @@ function renderTimer() {
   const el = $("#timer");
   if (!rest || !S.me) { el.hidden = true; return }
   const left = Math.round((rest.end - Date.now()) / 1000);
-  if (left <= 0 && !rest.beeped) { rest.beeped = true; saveRest(); beep() }
+  if (left <= 0 && !rest.beeped) { rest.beeped = true; saveRest(); if (!nativeTimer) beep() }
   if (left < -8) { rest = null; saveRest(); el.hidden = true; return }
   el.hidden = false;
   el.classList.toggle("over", left <= 0);
@@ -390,6 +407,7 @@ function renderTimer() {
   const html = left <= 0
     ? `<div class="in"><i class="ph ph-timer" style="font-size:24px"></i><span class="t">Los</span><span style="flex:1">Pause vorbei, nächster Satz.</span><button data-act="restSkip" aria-label="Schließen"><i class="ph ph-x"></i></button></div>`
     : `<div class="in"><span class="t num">${mm}:${ss}</span><div class="bar"><i style="width:${pct}%"></i></div>
+       ${iPhoneWeb ? `<button data-act="clockStart" aria-label="Restzeit in Apple Uhr starten">Uhr</button>` : ""}
        <button data-act="restAdd" data-d="-15" aria-label="15 Sekunden weniger">−15</button><button data-act="restAdd" data-d="15" aria-label="15 Sekunden mehr">+15</button>
        <button data-act="restSkip" aria-label="Pause überspringen"><i class="ph ph-skip-forward"></i></button></div>`;
   if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html }
@@ -1021,11 +1039,15 @@ async function disablePush() {
 }
 // Pausen-Ende in Supabase planen bzw. löschen, damit die Nachricht auch bei gesperrtem Handy kommt
 function syncRestPush() {
-  if (!pushOn()) return;
+  if (nativeTimer || !pushOn()) return;
   const next = active?.items.find(it => it.rows.some(r => !r.id))?.exercise;
   (rest ? api.schedulePush(rest.end, "Pause vorbei", next ? `Weiter mit ${next}` : "Weiter geht's.") : api.cancelPush()).catch(() => { });
 }
 function pushCard() {
+  if (nativeTimer) return `<div class="card"><h2>iPhone-Pausentimer</h2>
+    <p class="small muted">Die Satzpause erscheint auf dem Sperrbildschirm und auf unterstützten iPhones in der Dynamic Island.</p>
+    <div class="row"><button class="btn quiet" data-act="nativeSound">Pausenton einrichten</button>
+    <button class="link" data-act="nativeTest">Ton testen</button></div></div>`;
   let body;
   if (DEMO) body = `<p class="small muted">Im Demo-Modus nicht verfügbar.</p>`;
   else if (!pushSupported()) body = standalone()
@@ -1036,7 +1058,13 @@ function pushCard() {
       <div class="row"><button class="btn quiet" data-act="pushTest"><i class="ph ph-bell-ringing"></i>Test senden</button><button class="link" data-act="pushOff" style="color:var(--muted)">Ausschalten</button></div>`;
   else body = `<p class="small muted">Bekomm eine Mitteilung, wenn die Pause vorbei ist, auch wenn das Handy gesperrt ist.</p>
       <button class="btn" data-act="pushOn" style="align-self:flex-start" ${S.pushMsg ? "disabled" : ""}><i class="ph ph-bell"></i>${S.pushMsg || "Aktivieren"}</button>`;
-  return `<div class="card"><h2>Benachrichtigungen</h2>${body}</div>`;
+  const clock = iPhoneWeb ? `<details class="card"><summary>Uhr-Timer für die Dynamic Island</summary>
+    <p>Erstelle in Apples App „Kurzbefehle“ einmal den Kurzbefehl <b>BWAU Pause</b>.</p>
+    <ol><li>Füge die Aktion „Timer starten“ aus der App „Uhr“ hinzu.</li>
+    <li>Halte die Dauer gedrückt, wähle „Kurzbefehleingabe“ als Variable und stelle die Einheit auf <b>Sekunden</b>.</li></ol>
+    <p>Öffne beim Training über „Uhr“ den Kurzbefehl. Er startet einen eigenen Timer mit der Restzeit. Diesen Timer kannst du in der Uhr-App ändern oder stoppen. Den fertigen Kurzbefehl kannst du über das Teilen-Menü an Freunde schicken.</p>
+    <button class="btn quiet" data-act="clockTest">Mit 10 Sekunden testen</button></details>` : "";
+  return `<div class="card"><h2>Benachrichtigungen</h2>${body}</div>${clock}`;
 }
 
 // ---------- Ereignisse ----------
@@ -1047,6 +1075,24 @@ document.addEventListener("click", async ev => {
   const a = b.dataset.act, i = +b.dataset.i, j = +b.dataset.j;
   if (b.tagName === "BUTTON" && b.type !== "submit") ev.preventDefault();
   switch (a) {
+    case "clockTest":
+    case "clockStart": {
+      if (!iPhoneWeb || (a === "clockStart" && !rest)) return;
+      const url = shortcutURL(a === "clockTest" ? Date.now() + 10000 : rest.end);
+      if (!url) return;
+      if (a === "clockStart") {
+        if (rest.clockRequested && !window.confirm("Erneut an Uhr senden? Ein weiterer Timer kann starten.")) return;
+        rest.clockRequested = true;
+        saveRest();
+      }
+      window.location.href = url;
+      return;
+    }
+    case "nativeSound":
+    case "nativeTest": {
+      if (!nativeTimer) return;
+      return guard(async () => toast(await nativeTimer.postMessage({ action: a === "nativeTest" ? "test" : "permission" })));
+    }
     case "loginMode": loginMode = loginMode === "in" ? "up" : "in"; S.error = null; return render();
     case "startEmpty": return startWorkout("Training", []);
     case "repeat": {
@@ -1232,10 +1278,12 @@ setInterval(() => {
 (async () => {
   try {
     api = await createApi();
-    initSW();
+    if (!nativeTimer) initSW();
     S.me = await api.session();
     if (S.me) { await loadMine(); reconcileActive() }
     if (S.me && !S.profile) { await api.signOut(); S.me = null }
+    if (S.me) syncNativePause();
+    else nativeTimer?.postMessage({ action: "cancel" }).catch(() => {});
   } catch (e) { S.error = "Die App konnte nicht starten: " + (e.message || e) }
   if (active && S.me) keepAwake();
   render();

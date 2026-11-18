@@ -1,0 +1,18 @@
+name: iPhone-Build
+on:
+  push:
+    branches: [ios-pausentimer]
+    paths: ['ios/**', '.github/workflows/ios-pausentimer.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: xcodebuild -project ios/BWAU.xcodeproj -scheme BWAU -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
