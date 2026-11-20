@@ -1,0 +1,5 @@
+#define name BWAU Pause
+#include 'actions/calendar'
+
+const seconds = getNumbers(ShortcutInput)
+startTimer(qty(seconds, "sec"))
