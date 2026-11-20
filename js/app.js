@@ -5,6 +5,8 @@ import * as L from "./logic.js?v=set-feedback-1";
 
 import { nativeTimer, iPhoneWeb, shortcutURL, nativePause } from "./iphone-timer.js";
 
+import { analyzeWorkout } from "./training-analysis.js?v=analyse-1";
+
 const $ = s => document.querySelector(s);
 const view = $("#view");
 const esc = L.esc;
@@ -36,7 +38,7 @@ const S = {
   me: null, profile: null, profiles: [], workouts: [], sets: [], settings: new Map(), custom: [], plans: [],
   feed: null, best: null, feedMine: false, lbEx: null, progTab: null, openSettings: null,
   editPlan: null, confirm: null, error: null, importMsg: null, loading: false,
-  summary: null, noteEdit: null, pendingStart: null, feedOpen: new Set(), importLog: [], people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
+  noteEdit: null, pendingStart: null, feedOpen: new Set(), importLog: [], people: {}, peopleLoading: new Set(), editWo: null, weeks: null, commentOpen: null,
   lbMode: "best", challenges: null, chData: {}, newCh: false, showAllWo: false,
 };
 let api;
@@ -68,7 +70,7 @@ function saveRest() {
 
 const parts = () => location.hash.slice(1).split("/").map(p => { try { return decodeURIComponent(p) } catch { return p } });
 const route = () => parts()[0] || "training";
-const PARENT = { workout: "profil", person: "feed", uebung: "fortschritt" };
+const PARENT = { analyse: "training", workout: "profil", person: "feed", uebung: "fortschritt" };
 const TABS = [
   ["training", "ph-barbell", "Training"], ["fortschritt", "ph-chart-line-up", "Fortschritt"],
   ["feed", "ph-users-three", "Feed"], ["rangliste", "ph-trophy", "Rangliste"], ["profil", "ph-user-circle", "Profil"],
@@ -121,10 +123,11 @@ function render() {
   const r = route();
   const err = S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : "";
   let html = "";
-  if (r === "training") html = S.editPlan ? planEditor() : active ? workoutView() : S.summary ? summaryView() : S.pendingStart ? dayPickView() : startView();
+  if (r === "training") html = S.editPlan ? planEditor() : active ? workoutView() : S.pendingStart ? dayPickView() : startView();
   else if (r === "fortschritt") html = progressView();
   else if (r === "feed") html = feedView();
   else if (r === "rangliste") html = leaderboardView();
+  else if (r === "analyse") html = summaryView(+parts()[1]);
   else if (r === "workout") html = editWorkoutView(+parts()[1]);
   else if (r === "person") html = personView(parts()[1]);
   else if (r === "uebung") html = exerciseView(parts()[1], parts()[2]);
@@ -394,9 +397,13 @@ async function finishWorkout() {
   if (!n) { S.confirm = "discard"; render(); return }
   await guard(async () => {
     await api.finishWorkout(active.workoutId);
-    S.summary = buildSummary(active);
+    const workoutId = active.workoutId;
+    const workout = S.workouts.find(w => w.id === workoutId);
+    if (workout) workout.ended_at = new Date().toISOString();
     active = null; saveActive(); rest = null; saveRest(); syncRestPush(); releaseAwake();
-    await loadMine(); render(); scrollTo(0, 0);
+    location.hash = "analyse/" + workoutId;
+    render(); scrollTo(0, 0);
+    await loadMine(); render();
   });
 }
 async function discardWorkout() {
@@ -421,9 +428,13 @@ async function checkAutoEnd() {
     if (n) await api.updateWorkout(active.workoutId, { ended_at: new Date(last).toISOString() });
     else await api.deleteWorkout(active.workoutId);
   } catch { /* Supabase hat es vielleicht schon beendet; reconcileActive räumt auf */ }
-  const t = active.title;
+  const t = active.title, workoutId = active.workoutId;
   active = null; saveActive(); rest = null; saveRest(); syncRestPush(); releaseAwake();
-  await guard(async () => { await loadMine(); render() });
+  await guard(async () => {
+    await loadMine();
+    if (n && S.workouts.some(w => w.id === workoutId && w.ended_at)) location.hash = "analyse/" + workoutId;
+    render();
+  });
   toast(n ? `${t} wurde nach 30 Minuten ohne neuen Satz beendet` : `${t} ohne Sätze wurde verworfen`);
   autoEnding = false;
 }
@@ -434,6 +445,7 @@ function reconcileActive() {
   if (w && !w.ended_at) return;
   const t = active.title;
   active = null; saveActive(); rest = null; saveRest(); releaseAwake();
+  if (w?.ended_at && route() === "training") location.hash = "analyse/" + w.id;
   setTimeout(() => toast(`${t} wurde nach 30 Minuten ohne neuen Satz automatisch beendet`), 300);
 }
 
@@ -819,6 +831,7 @@ function editWorkoutView(id) {
   if (!e) return `${backLink("profil")}<div class="empty">Dieses Training gibt es nicht oder es gehört jemand anderem.</div>`;
   return `${backLink("profil")}
     <h1 class="h1s">Training bearbeiten</h1>
+    ${w.ended_at ? `<a class="btn quiet" href="#analyse/${w.id}">Trainingsanalyse ansehen</a>` : ""}
     <form class="stack" id="ewForm">
       <div class="card">
         <label class="field" for="ewTitle">Name<input id="ewTitle" type="text" maxlength="40" value="${esc(e.title)}"></label>
@@ -981,37 +994,59 @@ function noteHTML(ex) {
 }
 
 // ---------- Zusammenfassung nach dem Training ----------
-function buildSummary(a) {
-  const wid = a.workoutId, mine = S.sets.filter(s => s.workout_id === wid);
-  const hist = L.historyByExercise(S.sets, woMap(), wid);
-  const exs = [...new Set(mine.map(s => s.exercise))];
-  const prs = exs.filter(ex => {
-    const e = hist.get(ex); if (!e) return false;
-    const before = Math.max(...e.sessions.map(s => s.e1));
-    const now = Math.max(0, ...mine.filter(s => s.exercise === ex && s.reps <= 15).map(s => L.e1rm(+s.weight, +s.reps)));
-    return now > before + 0.01;
-  });
-  const vol = mine.reduce((t, s) => t + s.weight * s.reps, 0);
-  const prev = [...S.workouts].reverse().find(w => w.id !== wid && w.title === a.title && w.ended_at);
-  const prevVol = prev ? S.sets.filter(s => s.workout_id === prev.id).reduce((t, s) => t + s.weight * s.reps, 0) : null;
-  return { title: a.title, mins: Math.max(1, Math.round((Date.now() - Date.parse(a.startedAt)) / 60000)), sets: mine.length, exercises: exs.length, vol, prevVol, prs };
-}
 const fmtVol = v => v >= 1000 ? `${L.fmtW(Math.round(v / 100) / 10)} t` : `${L.fmtW(Math.round(v))} kg`;
-function summaryView() {
-  const s = S.summary, diff = s.prevVol ? Math.round((s.vol - s.prevVol) / s.prevVol * 100) : null;
-  return `<section class="hero">
-      <span class="hero-k">Geschafft</span>
-      <h2>${esc(s.title)}</h2>
-      <p>${s.exercises === 1 ? "1 Übung" : `${s.exercises} Übungen`} in ${s.mins === 1 ? "1 Minute" : `${s.mins} Minuten`}</p>
-    </section>
-    <div class="kpis sum num">
-      <div><b>${s.sets}</b><span>Sätze</span></div>
-      <div><b>${fmtVol(s.vol)}</b><span>bewegt</span></div>
-      <div><b>${diff == null ? "–" : (diff >= 0 ? "+" : "−") + Math.abs(diff) + " %"}</b><span>${diff == null ? "erstes Mal" : "vs. letztes Mal"}</span></div>
-      <div class="${s.prs.length ? "gold" : ""}"><b>${s.prs.length}</b><span>${s.prs.length === 1 ? "Rekord" : "Rekorde"}</span></div>
-    </div>
-    ${s.prs.length ? `<div class="card"><h3><i class="ph ph-trophy gold-i"></i> Neue Bestleistung</h3><div class="lifts">${s.prs.map(ex => `<span><a href="${exLink(S.me, ex)}">${esc(ex)}</a></span><span></span>`).join("")}</div></div>` : ""}
-    <button class="btn block" data-act="summaryDone">Fertig</button>`;
+const weightText = w => w === 0 ? "ohne Zusatzgewicht" : `mit ${L.fmtW(w)} kg`;
+function compareExercise(e) {
+  const { current, previous, priorReps } = e;
+  if (!previous) return `Erste erfasste Einheit: Dein bester Satz ${weightText(current.ww)} lag bei ${current.top} Wdh.`;
+  const when = L.fmtD(previous.d);
+  if (priorReps === null) return `Am ${when} lag dein Arbeitsgewicht bei ${L.fmtW(previous.ww)} kg. Damals hast du keinen Satz ${weightText(current.ww)} erfasst.`;
+  const change = current.top - priorReps;
+  if (!change) return `Dein bester Satz ${weightText(current.ww)} lag wie am ${when} bei ${current.top} Wdh.`;
+  return `Dein bester Satz ${weightText(current.ww)}: ${current.top} Wdh., ${Math.abs(change)} ${change > 0 ? "mehr" : "weniger"} als am ${when} (${priorReps} Wdh.).`;
+}
+
+function analysisCard(e) {
+  const { current, previous, advice } = e;
+  const feedback = current.sets.map((s, i) => {
+    if (!s.feedback) return "";
+    const reason = reasonLabels[s.feedback.reason] || "Notiz";
+    const note = s.feedback.note ? ` · ${esc(s.feedback.note)}` : "";
+    return `<li><b>Satz ${i + 1}</b> · ${esc(reason)}${note}${L.hasExternalLimit(s.feedback) ? " · Bei der Gewichtsempfehlung ausgeklammert." : ""}</li>`;
+  }).join("");
+  const performance = s => s ? `${L.fmtW(s.w)} kg × ${s.r}` : "–";
+  const rows = Array.from({ length: Math.max(current.sets.length, previous?.sets.length || 0) }, (_, i) =>
+    `<tr><th scope="row">${i + 1}</th><td>${performance(current.sets[i])}</td>${previous ? `<td>${performance(previous.sets[i])}</td>` : ""}</tr>`).join("");
+  return `<article class="card analysis-card">
+    <div class="spread"><h3><a href="${exLink(S.me,e.name)}">${esc(e.name)}</a></h3>${e.record ? '<span class="chip"><i class="ph ph-trophy"></i> Rekord</span>' : ""}</div>
+    <p>${compareExercise(e)}</p>
+    ${e.record ? `<p class="small">Geschätztes 1RM: ${L.fmtW(Math.round(e.record.estimate * 10) / 10)} kg, bisher ${L.fmtW(Math.round(e.record.priorBest * 10) / 10)} kg (Sätze bis 15 Wdh.).</p>` : ""}
+    ${feedback ? `<ul class="analysis-notes small">${feedback}</ul>` : ""}
+    <div class="analysis-next"><b>Nächste Einheit</b><p>${esc(advice.label)} · ${L.fmtW(advice.w)} kg · ${esc(advice.goal)}</p>${advice.note ? `<p class="small muted">${esc(advice.note)}</p>` : ""}</div>
+    <details><summary>Sätze im Detail</summary><table class="analysis-sets num"><thead><tr><th>Satz</th><th>Diese Einheit</th>${previous ? `<th>${L.fmtD(previous.d)}</th>` : ""}</tr></thead><tbody>${rows}</tbody></table>
+    <p class="small muted">Aktueller Zielbereich: ${e.cfg.min}–${e.cfg.max} Wdh.</p></details>
+    </article>`;
+}
+
+function summaryView(id) {
+  const workout = S.workouts.find(w => w.id === id && w.ended_at);
+  if (!workout) return `<div class="empty">Diese Trainingsanalyse ist nicht verfügbar.</div><a href="#profil">Zum Profil</a>`;
+  const report = analyzeWorkout(workout, S.workouts, S.sets, cfgFor);
+  const { exercises, totals, minutes, volumeChange } = report;
+  const highlight = exercises.filter(e => e.priorReps !== null && e.current.top > e.priorReps)
+    .sort((a, b) => (b.current.top - b.priorReps) - (a.current.top - a.priorReps))[0];
+  const records = exercises.filter(e => e.record).length;
+  const comparison = volumeChange !== null ? `Volumen gegenüber dem ${L.fmtD(report.previousPlan.started_at)}: ${volumeChange > 0 ? "+" : ""}${volumeChange} % bei gleichen Übungen und Satzzahlen.` : "";
+  return `<section class="hero"><span class="hero-k">Trainingsanalyse · ${L.fmtDT(workout.started_at)}</span>
+    <h2>${esc(workout.title)}</h2><p>${exercises.length} ${exercises.length === 1 ? "Übung" : "Übungen"}${Number.isFinite(minutes) ? ` · ${minutes < 1 ? "unter 1 Min." : minutes + " Min."}` : ""}</p></section>
+    <div class="kpis sum num"><div><b>${totals.sets}</b><span>Sätze</span></div><div><b>${totals.reps}</b><span>Wiederholungen</span></div>
+    <div><b>${fmtVol(totals.volume)}</b><span>Trainingsvolumen</span></div><div><b>${records}</b><span>Neue 1RM-Schätzrekorde</span></div></div>
+    ${totals.sets ? `<section class="card"><h2>Deine Einheit im Überblick</h2>
+      ${highlight ? `<p>Größtes Wiederholungsplus bei gleichem Gewicht: <b>${esc(highlight.name)}</b> (+${highlight.current.top - highlight.priorReps} Wdh. im besten Satz).</p>` : ""}
+      <p>${totals.within} von ${totals.sets} Sätzen lagen im aktuellen Wiederholungsbereich der jeweiligen Übung. ${totals.below} darunter, ${totals.above} darüber.</p>
+      ${comparison ? `<p class="small muted">${comparison}</p>` : ""}</section>
+      ${exercises.map(analysisCard).join("")}` : '<p class="empty">Für diese Einheit wurden keine Sätze erfasst.</p>'}
+    <a class="btn block" href="#training">Fertig</a>`;
 }
 
 // ---------- Trainingskalender ----------
@@ -1209,7 +1244,6 @@ document.addEventListener("click", async ev => {
       const k = i + +b.dataset.d; if (k < 0 || k >= active.items.length) return;
       [active.items[i], active.items[k]] = [active.items[k], active.items[i]]; saveActive(); return render();
     }
-    case "summaryDone": S.summary = null; render(); return scrollTo(0, 0);
     case "exportCsv": return exportCsv();
     case "feedMine": S.feedMine = b.dataset.v === "1"; return render();
     case "back": if (S.pendingStart) { S.pendingStart = null; return render() } if (history.length > 1) history.back(); else location.hash = b.dataset.v || "training"; return;

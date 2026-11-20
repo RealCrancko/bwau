@@ -274,3 +274,10 @@ button.card{border:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .post.slim{padding:12px 16px}
 .post .reacts{flex-wrap:nowrap}
 .post .react{padding:4px 8px;min-width:36px;justify-content:center}
+
+.analysis-sets{width:100%;border-collapse:collapse;margin:.6rem 0}
+.analysis-sets th,.analysis-sets td{text-align:left;padding:.4rem .2rem;border-bottom:1px solid var(--line)}
+.analysis-card summary{cursor:pointer}
+.analysis-next{border-left:3px solid var(--accent);padding-left:.75rem}
+.analysis-notes{margin:0;padding-left:1.2rem}
+.analysis-card h3,.analysis-notes li{overflow-wrap:anywhere}
