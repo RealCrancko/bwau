@@ -1,5 +1,4 @@
 #define name BWAU Pause
-#include 'actions/basic'
 #include 'actions/calendar'
 
 const seconds = getNumbers(ShortcutInput)
