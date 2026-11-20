@@ -1,0 +1,28 @@
+name: BWAU Pause signieren
+on:
+  push:
+    branches: [build-bwau-pause-shortcut]
+permissions:
+  contents: read
+jobs:
+  shortcut:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Kurzbefehl kompilieren und signieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 2 https://github.com/electrikmilk/cherri/releases/download/v2.4.0/cherri_linux-x86_64.zip -o "$RUNNER_TEMP/cherri.zip"
+          echo "160c2d71c2a3653a20f0b80a1e7505ee846137ef17e209f511c873e4471b8e44  $RUNNER_TEMP/cherri.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cherri.zip" -d "$RUNNER_TEMP/compiler"
+          compiler=$(find "$RUNNER_TEMP/compiler" -type f -name cherri | head -1)
+          chmod +x "$compiler"
+          "$compiler" "ios/shortcuts/BWAU Pause.cherri"
+          signed="ios/shortcuts/BWAU Pause.shortcut"
+          test "$(head -c4 "$signed")" = AEA1
+          echo "SHORTCUT_BYTES=$(base64 -w0 "$signed")"
