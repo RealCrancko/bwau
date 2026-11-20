@@ -299,8 +299,10 @@ function workoutView() {
 }
 const chipIcon = k => k === "up" ? '<i class="ph ph-arrow-up"></i> ' : k === "down" ? '<i class="ph ph-arrow-down"></i> ' : k === "stall" ? '<i class="ph ph-warning"></i> ' : "";
 
+const pendingSets = new WeakSet();
 async function tick(i, j) {
   const it = active.items[i], row = it.rows[j];
+  if (pendingSets.has(row)) return;
   if (row.id) {
     await guard(async () => { await api.deleteSet(row.id); S.sets = S.sets.filter(s => s.id !== row.id); row.id = null; active.lastAt = Date.now(); saveActive(); render() });
     return;
@@ -310,7 +312,11 @@ async function tick(i, j) {
   if (!(w >= 0)) { toast("Trag zuerst das Gewicht ein."); wIn.focus(); return }
   if (!(r > 0)) { toast("Trag zuerst die Wiederholungen ein."); rIn.focus(); return }
   row.w = w; row.r = r;
-  await guard(async () => {
+  const seconds = S.profile?.rest_seconds ?? 120;
+  const deadline = Date.now() + seconds * 1000;
+  const url = iPhoneWeb && store.get("bwau.autoClock") === true ? shortcutURL(deadline) : null;
+  pendingSets.add(row);
+  const saved = guard(async () => {
     const s = await api.addSet({ workout_id: active.workoutId, exercise: it.exercise, set_index: j, weight: w, reps: r });
     row.id = s.id; S.sets.push(s); active.lastAt = Date.now(); saveActive();
     // Restliche Sätze an die gerade geschaffte Leistung anpassen
@@ -318,9 +324,16 @@ async function tick(i, j) {
     const c = cfgFor(it.exercise);
     it.hint = L.adjustAfterSet(it.rows, j, { min: c.min, max: c.max, step: rec?.c.step ?? c.step ?? L.defaultStep(it.exercise, w) });
     saveActive();
-    startRest(S.profile?.rest_seconds ?? 120);
+    startRest(seconds, deadline, Boolean(url));
     render();
   });
+  try {
+    // Launch from the tap itself, while Safari still grants user activation.
+    if (url) window.location.href = url;
+  } finally {
+    await saved;
+    pendingSets.delete(row);
+  }
 }
 
 async function finishWorkout() {
@@ -393,7 +406,7 @@ function beep() {
   } catch { }
   navigator.vibrate?.([200, 100, 200]);
 }
-function startRest(sec) { rest = { end: Date.now() + sec * 1000, total: sec, beeped: false }; saveRest(); renderTimer(); syncRestPush() }
+function startRest(sec, end, clockRequested) { rest = { end, total: sec, beeped: false, clockRequested }; saveRest(); renderTimer(); syncRestPush() }
 function renderTimer() {
   const el = $("#timer");
   if (!rest || !S.me) { el.hidden = true; return }
@@ -1062,8 +1075,10 @@ function pushCard() {
     <p>Erstelle in Apples App „Kurzbefehle“ einmal den Kurzbefehl <b>BWAU Pause</b>.</p>
     <ol><li>Füge die Aktion „Timer starten“ aus der App „Uhr“ hinzu.</li>
     <li>Halte die Dauer gedrückt, wähle „Kurzbefehleingabe“ als Variable und stelle die Einheit auf <b>Sekunden</b>.</li></ol>
-    <p>Öffne beim Training über „Uhr“ den Kurzbefehl. Er startet einen eigenen Timer mit der Restzeit. Diesen Timer kannst du in der Uhr-App ändern oder stoppen. Den fertigen Kurzbefehl kannst du über das Teilen-Menü an Freunde schicken.</p>
-    <button class="btn quiet" data-act="clockTest">Mit 10 Sekunden testen</button></details>` : "";
+    <p>Prüfe mit dem Test, ob in Apple Uhr ein Timer über zehn Sekunden läuft. Meldet Kurzbefehle „nicht gefunden“, kontrolliere den Namen. Ist die Dauer falsch, prüfe die Variable und die Einheit Sekunden.</p>
+    <a class="btn quiet" href="shortcuts://run-shortcut?name=BWAU%20Pause&amp;input=text&amp;text=10">Mit 10 Sekunden testen</a>
+    <label class="row"><input type="checkbox" id="autoClock" ${store.get("bwau.autoClock") === true ? "checked" : ""}> Uhr beim Abhaken automatisch starten</label>
+    <p class="small muted">iOS kann das Öffnen von Kurzbefehle bestätigen lassen. Einen bereits gestarteten Uhr-Timer änderst oder stoppst du in Apple Uhr.</p></details>` : "";
   return `<div class="card"><h2>Benachrichtigungen</h2>${body}</div>${clock}`;
 }
 
@@ -1075,16 +1090,13 @@ document.addEventListener("click", async ev => {
   const a = b.dataset.act, i = +b.dataset.i, j = +b.dataset.j;
   if (b.tagName === "BUTTON" && b.type !== "submit") ev.preventDefault();
   switch (a) {
-    case "clockTest":
     case "clockStart": {
-      if (!iPhoneWeb || (a === "clockStart" && !rest)) return;
-      const url = shortcutURL(a === "clockTest" ? Date.now() + 10000 : rest.end);
+      if (!iPhoneWeb || !rest) return;
+      const url = shortcutURL(rest.end);
       if (!url) return;
-      if (a === "clockStart") {
-        if (rest.clockRequested && !window.confirm("Erneut an Uhr senden? Ein weiterer Timer kann starten.")) return;
-        rest.clockRequested = true;
-        saveRest();
-      }
+      if (rest.clockRequested && !window.confirm("Erneut an Uhr senden? Ein weiterer Timer kann starten.")) return;
+      rest.clockRequested = true;
+      saveRest();
       window.location.href = url;
       return;
     }
@@ -1208,6 +1220,7 @@ document.addEventListener("input", ev => {
 
 document.addEventListener("change", async ev => {
   const t = ev.target;
+  if (iPhoneWeb && t.id === "autoClock") { store.set("bwau.autoClock", t.checked); return }
   if (t.id === "lbEx") { S.lbEx = t.value; return render() }
   if (t.id === "hevyFile" && t.files.length) { for (const file of [...t.files]) await importData(() => file.text()); return }
   const box = t.closest(".settings");

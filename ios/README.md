@@ -4,7 +4,7 @@
 
 Öffnet [BWAU](https://realcrancko.github.io/bwau/) in Safari und fügt es über das Teilen-Menü zum Home-Bildschirm hinzu. Jeder meldet sich mit seinem eigenen BWAU-Konto an. Unter **Profil → Benachrichtigungen** könnt ihr den Pausenhinweis aktivieren und bei gesperrtem Gerät testen. iOS verwaltet den Ton unter **Einstellungen → Mitteilungen → BWAU**.
 
-Für den Uhr-Timer auf dem Sperrbildschirm und auf iPhones mit Dynamic Island öffnet im Profil **Uhr-Timer für die Dynamic Island**. Eine Person erstellt den dort beschriebenen Kurzbefehl **BWAU Pause** und teilt ihn aus Apples Kurzbefehle-App mit der Gruppe. Alle übernehmen ihn unter genau diesem Namen. Probiert im Profil den Zehn-Sekunden-Test. Tippt während einer Satzpause auf **Uhr**, um die zu diesem Zeitpunkt verbleibenden Sekunden zu übernehmen. Spätere Änderungen an diesem separaten Timer erfolgen in der Uhr-App. Den Alarmton legt ihr dort unter **Timer-Ende** fest.
+Für den Uhr-Timer auf dem Sperrbildschirm und auf iPhones mit Dynamic Island öffnet im Profil **Uhr-Timer für die Dynamic Island**. Eine Person erstellt den dort beschriebenen Kurzbefehl **BWAU Pause** und teilt ihn aus Apples Kurzbefehle-App mit der Gruppe. Alle übernehmen ihn unter genau diesem Namen. Probiert im Profil den Zehn-Sekunden-Test. Schaltet im selben Bereich **Uhr beim Abhaken automatisch starten** ein. Ab dann ruft das Abhaken eines gültigen Satzes direkt den Kurzbefehl auf. iOS kann eine Bestätigung anzeigen. Ohne Automatik könnt ihr während einer Satzpause auf **Uhr** tippen. Spätere Änderungen an diesem separaten Timer erfolgen in der Uhr-App. Den Alarmton legt ihr dort unter **Timer-Ende** fest.
 
 ## Automatische Live-Aktivität mit Xcode
 
