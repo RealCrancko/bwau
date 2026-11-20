@@ -78,7 +78,7 @@ export function historyByExercise(sets, workouts, excludeWorkout) {
     const e = ex.get(s.exercise) ?? { name: s.exercise, sessions: new Map() };
     const wo = workouts.get(s.workout_id);
     const sess = e.sessions.get(s.workout_id) ?? { d: new Date(wo?.started_at ?? s.performed_at), title: wo?.title ?? "", sets: [] };
-    sess.sets.push({ w: +s.weight, r: +s.reps, i: s.set_index ?? 0 });
+    sess.sets.push({ w: +s.weight, r: +s.reps, i: s.set_index ?? 0, id: s.id, feedback: s.feedback });
     e.sessions.set(s.workout_id, sess);
     ex.set(s.exercise, e);
   }
@@ -113,6 +113,36 @@ export function autoStep(e) {
 
 // cfg: {min, max, step?}
 export function advise(e, cfg) {
+  const last = e.sessions.at(-1);
+  if (!e.sessions.some(session => session.sets.some(set => hasExternalLimit(set.feedback)))) {
+    return adviseFromPerformance(e, cfg);
+  }
+  // Keep the complete sessions for charts, records and the last-session display.
+  const sessions = [];
+  for (const session of e.sessions) {
+    const sets = session.sets.filter(set => !hasExternalLimit(set.feedback));
+    if (!sets.length) continue;
+    if (sets.length === session.sets.length) sessions.push(session);
+    else {
+      const comparable = { ...session, sets };
+      summarize(comparable);
+      sessions.push(comparable);
+    }
+  }
+  if (last.sets.every(set => hasExternalLimit(set.feedback))) {
+    const c = { ...cfg, step: cfg.step ?? autoStep(sessions.length ? { ...e, sessions } : e) };
+    return { kind: "hold", label: "Halten", w: last.ww, reps: c.min,
+      goal: `Ziel: ${c.min}–${c.max} Wdh.`, c, last,
+      note: "Für alle Sätze der letzten Einheit hast du einen anderen begrenzenden Faktor angegeben. Das Gewicht bleibt gleich." };
+  }
+  return { ...adviseFromPerformance({ ...e, sessions }, cfg), last };
+}
+
+export function hasExternalLimit(feedback) {
+  return ["arms", "grip", "otherMuscle", "interrupted", "otherLimit"].includes(feedback?.reason);
+}
+
+function adviseFromPerformance(e, cfg) {
   const S = e.sessions, L = S[S.length - 1], w = L.ww;
   const c = { min: cfg.min, max: cfg.max, step: cfg.step ?? autoStep(e) };
   const streak = []; for (let i = S.length - 1; i >= 0 && S[i].ww === w; i--) streak.unshift(S[i]);
@@ -172,6 +202,14 @@ export function defaultStep(name, w) {
 // rows: [{w, r, id, manual, tr}], j: gerade abgehakter Satz, cfg: {min, max, step}
 export function adjustAfterSet(rows, j, cfg) {
   const done = rows[j], w = +done.w, r = +done.r;
+  if (hasExternalLimit(done.feedback)) {
+    for (const row of rows.slice(j + 1)) {
+      if (row.id) continue;
+      if (!row.manual) row.w = w;
+      row.tr = done.plannedReps ?? cfg.min;
+    }
+    return "Anderer begrenzender Faktor vermerkt. Für die nächsten Sätze bleiben Gewicht und Wiederholungsziel beim bisherigen Plan.";
+  }
   let nextW = w, hint;
   if (r >= cfg.max + 2) { nextW = round4(w + cfg.step); hint = `${r} Wdh. war deutlich mehr als geplant. Nächster Satz mit ${fmtW(nextW)} kg.` }
   else if (r < cfg.min - 1 && w - cfg.step > 0) { nextW = round4(w - cfg.step); hint = `${r} Wdh. war zu schwer. Nächster Satz mit ${fmtW(nextW)} kg.` }

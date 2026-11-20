@@ -1,7 +1,7 @@
 import { createApi, DEMO } from "./api.js?v=mwl20k1e";
 import { VAPID_PUBLIC } from "./config.js?v=mwl20k1e";
 import { musclesFor, videoUrl } from "./muscles.js?v=mwl20k1e";
-import * as L from "./logic.js?v=mwl20k1e";
+import * as L from "./logic.js?v=set-feedback-1";
 
 import { nativeTimer, iPhoneWeb, shortcutURL, nativePause } from "./iphone-timer.js";
 
@@ -100,7 +100,8 @@ async function loadMine() {
   const [profiles, workouts, sets, settings, custom, plans] = await Promise.all([
     api.profiles(), api.myWorkouts(), api.mySets(), api.settings(), api.customExercises(), api.plans()]);
   S.profiles = profiles; S.profile = profiles.find(p => p.id === S.me);
-  S.workouts = workouts; S.sets = sets; S.custom = custom; S.plans = plans;
+  S.workouts = workouts; S.sets = sets;
+  for (const set of sets) set.feedback = store.get(feedbackKey(set)); S.custom = custom; S.plans = plans;
   S.settings = new Map(settings.map(s => [s.exercise, s]));
   S.feed = null; S.best = null;
 }
@@ -272,7 +273,7 @@ function workoutView() {
           <span class="i">${j + 1}</span>
           <input id="w-${i}-${j}" type="number" inputmode="decimal" step="0.25" min="0" value="${r.w}" data-i="${i}" data-j="${j}" data-f="w" aria-label="Gewicht Satz ${j + 1}" class="${r.id ? "done" : ""}" ${r.id ? "readonly" : ""}>
           <input id="r-${i}-${j}" type="number" inputmode="numeric" min="1" value="${r.r}" placeholder="${r.tr ?? (rec ? rec.reps : "")}" data-i="${i}" data-j="${j}" data-f="r" aria-label="Wiederholungen Satz ${j + 1}" class="${r.id ? "done" : ""}" ${r.id ? "readonly" : ""}>
-          <button class="tick ${r.id ? "on" : ""}" data-act="tick" data-i="${i}" data-j="${j}" aria-label="${r.id ? "Satz ${j + 1} zurücknehmen" : "Satz ${j + 1} abhaken"}" aria-pressed="${!!r.id}"><i class="ph ph-check"></i></button>`).join("")}
+          <button class="tick ${r.id ? "on" : ""}" data-act="tick" data-i="${i}" data-j="${j}" aria-label="${r.id ? "Satz ${j + 1} zurücknehmen" : "Satz ${j + 1} abhaken"}" aria-pressed="${!!r.id}"><i class="ph ph-check"></i></button>${r.id ? feedbackEditor(r.id, r.feedback) : ""}`).join("")}
       </div>
       <div class="spread">
         <button class="link" data-act="addRow" data-i="${i}"><i class="ph ph-plus"></i> Satz</button>
@@ -299,12 +300,64 @@ function workoutView() {
 }
 const chipIcon = k => k === "up" ? '<i class="ph ph-arrow-up"></i> ' : k === "down" ? '<i class="ph ph-arrow-down"></i> ' : k === "stall" ? '<i class="ph ph-warning"></i> ' : "";
 
+const reasonLabels = {
+  arms: "Arme zuerst müde", grip: "Griffkraft am Limit", otherMuscle: "Anderer Muskel am Limit",
+  interrupted: "Satz unterbrochen", otherLimit: "Anderer Grund – Gewicht halten",
+  weight: "Gewicht war zu schwer", note: "Nur eine Notiz"
+};
+const feedbackKey = set => `bwau.setFeedback.${S.me}.${set.workout_id}.${set.id}`;
+
+function feedbackEditor(id, feedback) {
+  if (id == null) return "";
+  return `<details class="set-feedback" style="grid-column:1/-1">
+    <summary class="small muted">${feedback ? esc(reasonLabels[feedback.reason] || "Satznotiz") : "Grund für weniger Wiederholungen"}</summary>
+    <label class="field">Was hat dich begrenzt?<select data-reason>
+      <option value="">Keine Angabe</option>${Object.entries(reasonLabels).map(([key, label]) =>
+        `<option value="${key}" ${feedback?.reason === key ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
+    <label class="field">Optionaler Kommentar<input type="text" data-comment maxlength="200" value="${esc(feedback?.note || "")}" placeholder="z. B. Trizeps war vor der Brust müde"></label>
+    <p class="small muted">Der gewählte Grund steuert die Empfehlung. Deine Notiz bleibt auf diesem Gerät.</p>
+    <button class="btn quiet" type="button" data-act="saveFeedback" data-id="${esc(id)}">Übernehmen</button>
+  </details>`;
+}
+
+function adjustUpcoming(item, j) {
+  const c = cfgFor(item.exercise);
+  const rec = recFor(item.exercise, L.historyByExercise(S.sets, woMap(), active.workoutId));
+  item.hint = L.adjustAfterSet(item.rows, j, { ...c, step: rec?.c.step ?? c.step ?? L.defaultStep(item.exercise, +item.rows[j].w) });
+}
+
+function applyFeedback(button) {
+  const set = S.sets.find(s => String(s.id) === button.dataset.id);
+  if (!set) return;
+  const editor = button.closest(".set-feedback");
+  const note = editor.querySelector("[data-comment]").value.trim().slice(0, 200);
+  const reason = editor.querySelector("[data-reason]").value || (note ? "note" : "");
+  const feedback = reason ? { reason, note } : null;
+  const key = feedbackKey(set);
+  try {
+    if (feedback) localStorage.setItem(key, JSON.stringify(feedback));
+    else localStorage.removeItem(key);
+  } catch { toast("Speichern auf diesem Gerät ist fehlgeschlagen."); return }
+  set.feedback = feedback;
+  if (active?.workoutId === set.workout_id) {
+    const item = active.items.find(it => it.rows.some(row => row.id === set.id));
+    if (item) {
+      const j = item.rows.findIndex(row => row.id === set.id);
+      item.rows[j].feedback = feedback;
+      if (item.lastAdjustedId === set.id) adjustUpcoming(item, j);
+      saveActive();
+    }
+  }
+  render();
+  toast(feedback ? "Grund zum Satz gespeichert." : "Angabe entfernt.");
+}
+
 const pendingSets = new WeakSet();
 async function tick(i, j) {
   const it = active.items[i], row = it.rows[j];
   if (pendingSets.has(row)) return;
   if (row.id) {
-    await guard(async () => { await api.deleteSet(row.id); S.sets = S.sets.filter(s => s.id !== row.id); row.id = null; active.lastAt = Date.now(); saveActive(); render() });
+    await guard(async () => { await api.deleteSet(row.id); S.sets = S.sets.filter(s => s.id !== row.id); store.set(feedbackKey({ workout_id: active.workoutId, id: row.id }), null); row.id = null; row.feedback = null; active.lastAt = Date.now(); saveActive(); render() });
     return;
   }
   const wIn = $(`#w-${i}-${j}`), rIn = $(`#r-${i}-${j}`);
@@ -312,6 +365,7 @@ async function tick(i, j) {
   if (!(w >= 0)) { toast("Trag zuerst das Gewicht ein."); wIn.focus(); return }
   if (!(r > 0)) { toast("Trag zuerst die Wiederholungen ein."); rIn.focus(); return }
   row.w = w; row.r = r;
+  row.plannedReps = row.tr ?? (parseInt(rIn.placeholder, 10) || cfgFor(it.exercise).min);
   const seconds = S.profile?.rest_seconds ?? 120;
   const deadline = Date.now() + seconds * 1000;
   const url = iPhoneWeb && store.get("bwau.autoClock") === true ? shortcutURL(deadline) : null;
@@ -320,9 +374,8 @@ async function tick(i, j) {
     const s = await api.addSet({ workout_id: active.workoutId, exercise: it.exercise, set_index: j, weight: w, reps: r });
     row.id = s.id; S.sets.push(s); active.lastAt = Date.now(); saveActive();
     // Restliche Sätze an die gerade geschaffte Leistung anpassen
-    const rec = recFor(it.exercise, L.historyByExercise(S.sets, woMap(), active.workoutId));
-    const c = cfgFor(it.exercise);
-    it.hint = L.adjustAfterSet(it.rows, j, { min: c.min, max: c.max, step: rec?.c.step ?? c.step ?? L.defaultStep(it.exercise, w) });
+    it.lastAdjustedId = s.id;
+    adjustUpcoming(it, j);
     saveActive();
     startRest(seconds, deadline, Boolean(url));
     render();
@@ -722,7 +775,7 @@ function exerciseView(uid, ex) {
     ${uid === S.me ? `<div class="card"><h3>Notiz</h3>${noteHTML(ex)}</div>` : ""}
     ${e.sessions.length > 1 ? `<div class="card"><h3>Verlauf</h3>${L.chartSVG(e.sessions.map(s => ({ d: s.d, v: s.e1 })))}<p class="small muted">Geschätztes 1RM pro Einheit</p></div>` : ""}
     <div class="card"><h3>Rekorde</h3><div class="lifts num">${prs.slice().reverse().slice(0, 6).map(s => `<span>${L.fmtD(s.d)}</span><span>ca. ${Math.round(s.e1)} kg</span>`).join("")}</div></div>
-    <div class="card"><h3>Alle Einheiten</h3><div class="lifts num">${e.sessions.slice().reverse().map(s => `<span>${L.fmtD(s.d)} <span class="muted small">${esc(s.title)}</span></span><span>${s.sets.map(x => `${L.fmtW(x.w)}×${x.r}`).join(", ")}</span>`).join("")}</div></div>`;
+    <div class="card"><h3>Alle Einheiten</h3><div class="lifts num">${e.sessions.slice().reverse().map(s => `<span>${L.fmtD(s.d)} <span class="muted small">${esc(s.title)}</span></span><div>${s.sets.map((x, j) => `<div>Satz ${j + 1}: ${L.fmtW(x.w)} kg × ${x.r}${uid === S.me ? feedbackEditor(x.id, x.feedback) : ""}</div>`).join("")}</div>`).join("")}</div></div>`;
 }
 
 // ---------- Profil der anderen ----------
@@ -1078,6 +1131,7 @@ function pushCard() {
     <p>Prüfe mit dem Test, ob in Apple Uhr ein Timer über zehn Sekunden läuft. Meldet Kurzbefehle „nicht gefunden“, kontrolliere den Namen. Ist die Dauer falsch, prüfe die Variable und die Einheit Sekunden.</p>
     <a class="btn quiet" href="shortcuts://run-shortcut?name=BWAU%20Pause&amp;input=text&amp;text=10">Mit 10 Sekunden testen</a>
     <label class="row"><input type="checkbox" id="autoClock" ${store.get("bwau.autoClock") === true ? "checked" : ""}> Uhr beim Abhaken automatisch starten</label>
+    <p class="small muted">Aus: BWAU startet seinen eigenen Pausentimer und bleibt im Training. Ein: Der iPhone-Uhr-Timer startet über die App Kurzbefehle.</p>
     <p class="small muted">iOS kann das Öffnen von Kurzbefehle bestätigen lassen. Einen bereits gestarteten Uhr-Timer änderst oder stoppst du in Apple Uhr.</p></details>` : "";
   return `<div class="card"><h2>Benachrichtigungen</h2>${body}</div>${clock}`;
 }
@@ -1122,6 +1176,7 @@ document.addEventListener("click", async ev => {
     case "planDelete": readPlanForm(); S.confirm = "deletePlan"; return render();
     case "planDeleteYes": return guard(async () => { await api.deletePlan(S.editPlan.id); S.editPlan = null; S.confirm = null; S.plans = await api.plans(); render(); toast("Plan gelöscht") });
     case "confirmNo": S.confirm = null; return render();
+    case "saveFeedback": return applyFeedback(b);
     case "tick": return tick(i, j);
     case "addRow": { const it = active.items[i], last = it.rows.at(-1); it.rows.push({ w: last ? last.w : "", r: "", id: null, tr: last?.tr }); saveActive(); return render() }
     case "removeEx": {
