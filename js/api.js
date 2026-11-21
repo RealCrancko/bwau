@@ -45,6 +45,7 @@ function supabaseApi(sb) {
 
     async myWorkouts() { return pageAll(() => sb.from("workouts").select("id,title,started_at,ended_at").eq("user_id", me).order("started_at")) },
     async mySets() { return pageAll(() => sb.from("sets").select("id,workout_id,exercise,set_index,weight,reps,performed_at").eq("user_id", me).order("id")) },
+    async addCardio(row) { return must(await sb.from("workouts").insert(row).select().single()) },
     async startWorkout(title) { return must(await sb.from("workouts").insert({ title, started_at: new Date().toISOString() }).select().single()) },
     async finishWorkout(id) { must(await sb.from("workouts").update({ ended_at: new Date().toISOString() }).eq("id", id)) },
     async deleteWorkout(id) { must(await sb.from("workouts").delete().eq("id", id)) },
@@ -146,6 +147,7 @@ function demoApi() {
     async updateProfile(patch) { Object.assign(db.users.find(u => u.id === me()), patch); save() },
     async myWorkouts() { return wait(db.workouts.filter(w => w.user_id === me()).sort((a, b) => a.started_at.localeCompare(b.started_at))) },
     async mySets() { return wait(db.sets.filter(s => s.user_id === me())) },
+    async addCardio(row) { const w = { ...row, id: id(), user_id: me() }; db.workouts.push(w); save(); return wait(w) },
     async startWorkout(title) { const w = { id: id(), user_id: me(), title, started_at: new Date().toISOString(), ended_at: null }; db.workouts.push(w); save(); return wait(w) },
     async finishWorkout(wid) { db.workouts.find(w => w.id === wid).ended_at = new Date().toISOString(); save() },
     async deleteWorkout(wid) { db.workouts = db.workouts.filter(w => w.id !== wid); db.sets = db.sets.filter(s => s.workout_id !== wid); save() },

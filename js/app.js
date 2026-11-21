@@ -1,4 +1,4 @@
-import { createApi, DEMO } from "./api.js?v=mwl20k1e";
+import { createApi, DEMO } from "./api.js?v=cardio-1";
 import { VAPID_PUBLIC } from "./config.js?v=mwl20k1e";
 import { musclesFor, videoUrl } from "./muscles.js?v=mwl20k1e";
 import * as L from "./logic.js?v=set-feedback-1";
@@ -70,7 +70,7 @@ function saveRest() {
 
 const parts = () => location.hash.slice(1).split("/").map(p => { try { return decodeURIComponent(p) } catch { return p } });
 const route = () => parts()[0] || "training";
-const PARENT = { analyse: "training", workout: "profil", person: "feed", uebung: "fortschritt" };
+const PARENT = { cardio: "training", analyse: "training", workout: "profil", person: "feed", uebung: "fortschritt" };
 const TABS = [
   ["training", "ph-barbell", "Training"], ["fortschritt", "ph-chart-line-up", "Fortschritt"],
   ["feed", "ph-users-three", "Feed"], ["rangliste", "ph-trophy", "Rangliste"], ["profil", "ph-user-circle", "Profil"],
@@ -127,6 +127,7 @@ function render() {
   else if (r === "fortschritt") html = progressView();
   else if (r === "feed") html = feedView();
   else if (r === "rangliste") html = leaderboardView();
+  else if (r === "cardio") html = cardioForm();
   else if (r === "analyse") html = summaryView(+parts()[1]);
   else if (r === "workout") html = editWorkoutView(+parts()[1]);
   else if (r === "person") html = personView(parts()[1]);
@@ -173,6 +174,32 @@ function muscleSummary(exercises, n = 3) {
   for (const ex of exercises) for (const m of musclesFor(ex)?.primary ?? []) cnt.set(m, (cnt.get(m) || 0) + 1);
   return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([m]) => m);
 }
+const cardioActivities = ["Laufen", "Gehen", "Radfahren", "Crosstrainer", "Rudern", "Schwimmen", "Treppensteigen", "Sonstiges"];
+function cardioData(w) {
+  const [prefix, activity, distance, ...extra] = w.title.split(" · ");
+  if (prefix !== "Cardio" || !cardioActivities.includes(activity) || extra.length || !w.ended_at) return null;
+  if (distance && !/^\d+(?:,\d+)? km$/.test(distance)) return null;
+  const minutes = Math.round((Date.parse(w.ended_at) - Date.parse(w.started_at)) / 60000);
+  return { activity, minutes, km: distance ? Number(distance.replace(" km", "").replace(",", ".")) : null };
+}
+function cardioForm() {
+  return `<h1>Cardio eintragen</h1><form id="cardioForm" class="card">
+    <label>Sportart<select name="activity">${cardioActivities.map(a => `<option>${a}</option>`).join("")}</select></label>
+    <label>Dauer in Minuten<input type="number" name="minutes" min="1" max="1440" step="1" inputmode="numeric" required></label>
+    <label>Strecke in km (optional)<input type="number" name="km" min="0.01" max="9999" step="0.01" inputmode="decimal"></label>
+    <button class="btn primary" type="submit">Einheit speichern</button><a href="#training">Zurück zum Training</a></form>`;
+}
+function cardioSummary(w, data) {
+  const previous = S.workouts.filter(o => o.started_at < w.started_at && cardioData(o)?.activity === data.activity)
+    .sort((a,b) => b.started_at.localeCompare(a.started_at))[0];
+  const prior = previous && cardioData(previous);
+  const format = n => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+  return `<h1>Cardio-Auswertung</h1><section class="hero"><span class="hero-k">${L.fmtDT(w.started_at)}</span><h2>${data.activity}</h2>
+    <p>${data.minutes} Min.${data.km ? ` · ${format(data.km)} km · Ø ${format(data.km * 60 / data.minutes)} km/h` : ""}</p></section>
+    ${prior ? `<section class="card"><h2>Letzte Einheit im Vergleich</h2><p>${L.fmtD(previous.started_at)} · ${prior.minutes} Min.${prior.km ? ` · ${format(prior.km)} km` : ""}</p></section>` : ""}
+    <a class="btn" href="#training">Zum Training</a>`;
+}
+
 function startView() {
   const routines = []; const seen = new Set();
   for (const w of [...S.workouts].reverse()) {
@@ -206,6 +233,7 @@ function startView() {
         <span class="hero-k">Los geht's</span><h2>Erstes Training</h2>
         <p>Starte leer und füg Übungen hinzu, oder importiere deine Daten im Profil.</p>
         <button class="btn hero-b" data-act="startEmpty"><i class="ph ph-play"></i>Training starten</button></section>`}
+    <a class="btn quiet" href="#cardio"><i class="ph ph-heartbeat"></i>Cardio eintragen</a>
     ${rest.length ? `<section class="list"><h2>Weitere Trainings</h2>${rest.map(({ w, ex }) => `<div class="lrow"><button class="lmain" data-act="repeat" data-id="${w.id}">
         <span><b>${esc(w.title)}</b><span class="small muted">${ex.length} Übungen, ${ago(w.started_at)}</span></span><i class="ph ph-caret-right"></i></button></div>`).join("")}</section>` : ""}
     ${next ? `<button class="link" data-act="startEmpty" style="align-self:flex-start"><i class="ph ph-plus"></i> Leeres Training starten</button>` : ""}
@@ -590,7 +618,7 @@ function when(d) {
 function feedView() {
   if (!S.feed) { loadFeed(); return `<h1>Feed</h1><p class="muted">Lädt die letzten Trainings …</p>` }
   const best = new Set((S.best || []).map(b => b.user_id + "|" + b.exercise + "|" + b.workout_id));
-  const list = S.feed.filter(w => !S.feedMine || w.user_id === S.me).filter(w => w.sets.length || !w.ended_at);
+  const list = S.feed.filter(w => !S.feedMine || w.user_id === S.me).filter(w => w.sets.length || !w.ended_at || cardioData(w));
   // Rekord nur, wenn die Person die Übung schon einmal vorher gemacht hat (sonst ist das erste Training voller „Rekorde“)
   const isRecord = (w, ex) => best.has(w.user_id + "|" + ex + "|" + w.id)
     && S.feed.some(o => o.user_id === w.user_id && o.started_at < w.started_at && o.sets.some(s => s.exercise === ex));
@@ -605,6 +633,8 @@ function feedView() {
     const open = S.feedOpen.has(w.id), shown = open ? rows : rows.slice(0, 3);
     const muscles = muscleSummary(rows.map(s => s.exercise));
     // Gerade gestartet, noch kein Satz: nur eine schlanke Zeile statt lauter Nullen
+    const cardio = cardioData(w);
+    if (cardio) return `<article class="post slim"><a class="who" href="#person/${w.user_id}"><span class="av ${avc(w.user_id)}">${initials(nameOf(w.user_id))}</span><span><b>${esc(nameOf(w.user_id))}</b><span class="small muted">${esc(w.title)} · ${cardio.minutes} Min. · ${when(w.ended_at)}</span></span></a></article>`;
     if (!rows.length) return `<article class="post slim"><div class="spread"><a class="who" href="#person/${w.user_id}"><span class="av ${avc(w.user_id)}">${initials(nameOf(w.user_id))}</span>
         <span><b>${esc(nameOf(w.user_id))}</b><span class="small muted">startet ${esc(w.title)}, ${when(w.started_at)}</span></span></a><span class="chip live"><i class="ph ph-record"></i>Trainiert gerade</span></div></article>`;
     return `<article class="post">
@@ -711,7 +741,7 @@ function myWorkoutsCard() {
   const shown = S.showAllWo ? list : list.slice(0, 8);
   const count = id => S.sets.filter(s => s.workout_id === id).length;
   return `<div class="card"><h2>Meine Trainings</h2>
-    <div class="wolist">${shown.map(w => `<a href="#workout/${w.id}"><span>${esc(w.title)} <span class="small muted">${L.fmtDT(w.started_at)}</span></span><span class="small muted num">${nSets(count(w.id))} <i class="ph ph-pencil-simple"></i></span></a>`).join("")}</div>
+    <div class="wolist">${shown.map(w => `<a href="#${cardioData(w) ? "analyse" : "workout"}/${w.id}"><span>${esc(w.title)} <span class="small muted">${L.fmtDT(w.started_at)}</span></span><span class="small muted num">${cardioData(w) ? cardioData(w).minutes + " Min." : nSets(count(w.id))} <i class="ph ph-pencil-simple"></i></span></a>`).join("")}</div>
     ${list.length > 8 ? `<button class="link" data-act="showAllWo">${S.showAllWo ? "Weniger anzeigen" : `Alle ${list.length} anzeigen`}</button>` : ""}</div>`;
 }
 async function importData(getText) {
@@ -1031,6 +1061,8 @@ function analysisCard(e) {
 function summaryView(id) {
   const workout = S.workouts.find(w => w.id === id && w.ended_at);
   if (!workout) return `<div class="empty">Diese Trainingsanalyse ist nicht verfügbar.</div><a href="#profil">Zum Profil</a>`;
+  const cardio = cardioData(workout);
+  if (cardio) return cardioSummary(workout, cardio);
   const report = analyzeWorkout(workout, S.workouts, S.sets, cfgFor);
   const { exercises, totals, minutes, volumeChange } = report;
   const highlight = exercises.filter(e => e.priorReps !== null && e.current.top > e.priorReps)
@@ -1325,6 +1357,20 @@ document.addEventListener("change", async ev => {
 document.addEventListener("submit", async ev => {
   ev.preventDefault();
   const f = ev.target;
+  if (f.id === "cardioForm") {
+    if (f.querySelector("button").disabled || !f.reportValidity()) return;
+    const { activity, minutes, km } = f.elements;
+    const end = Date.now();
+    const title = ["Cardio", activity.value, ...(km.value ? [km.valueAsNumber.toLocaleString("de-DE", { useGrouping: false }) + " km"] : [])].join(" · ");
+    f.querySelector("button").disabled = true;
+    return guard(async () => {
+      const w = await api.addCardio({ title, started_at: new Date(end - minutes.valueAsNumber * 60000).toISOString(), ended_at: new Date(end).toISOString() });
+      S.workouts.push(w);
+      S.workouts.sort((a,b) => a.started_at.localeCompare(b.started_at));
+      S.feed = null;
+      location.hash = "analyse/" + w.id;
+    });
+  }
   if (f.id === "loginForm") return submitLogin();
   if (f.id === "planForm") return savePlan();
   if (f.id === "noteForm") {
