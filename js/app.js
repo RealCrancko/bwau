@@ -1069,7 +1069,7 @@ function healthCard(workout) {
   if (!iPhoneWeb || !healthPayload(workout)) return "";
   return `<section class="card"><h2>Apple Health</h2>
     <button class="btn quiet" data-act="exportHealth" data-id="${workout.id}">${store.get(healthKey(workout.id)) ? "Erneut an Health übergeben" : "Krafttraining in Health eintragen"}</button>
-    <details><summary>Kurzbefehl einmalig einrichten</summary><ol>
+    <a class="btn quiet" download="BWAU Krafttraining.shortcut" href="ios/shortcuts/BWAU%20Krafttraining.shortcut">Kurzbefehl herunterladen</a><details><summary>Manuell einrichten</summary><ol>
     <li>Öffne Kurzbefehle, tippe auf + und nenne den Kurzbefehl genau <b>BWAU Krafttraining</b>.</li>
     <li>Wandle die Kurzbefehleingabe mit „Wörterbuch aus Eingabe abrufen“ in ein Wörterbuch um.</li>
     <li>Lies mit „Wörterbuchwert abrufen“ den Schlüssel <b>start</b> aus. Lies mit einer zweiten solchen Aktion <b>sekunden</b> aus demselben Wörterbuch aus.</li>
