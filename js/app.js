@@ -1058,6 +1058,25 @@ function analysisCard(e) {
     </article>`;
 }
 
+function healthPayload(workout) {
+  if (!workout?.ended_at || cardioData(workout)) return null;
+  const start = Date.parse(workout.started_at), end = Date.parse(workout.ended_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start: new Date(start).toISOString(), sekunden: Math.max(1, Math.round((end - start) / 1000)) };
+}
+const healthKey = id => "bwau.healthRequested." + S.me + "." + id;
+function healthCard(workout) {
+  if (!iPhoneWeb || !healthPayload(workout)) return "";
+  return `<section class="card"><h2>Apple Health</h2>
+    <button class="btn quiet" data-act="exportHealth" data-id="${workout.id}">${store.get(healthKey(workout.id)) ? "Erneut an Health übergeben" : "Krafttraining in Health eintragen"}</button>
+    <details><summary>Kurzbefehl einmalig einrichten</summary><ol>
+    <li>Öffne Kurzbefehle, tippe auf + und nenne den Kurzbefehl genau <b>BWAU Krafttraining</b>.</li>
+    <li>Wandle die Kurzbefehleingabe mit „Wörterbuch aus Eingabe abrufen“ in ein Wörterbuch um.</li>
+    <li>Lies mit „Wörterbuchwert abrufen“ den Schlüssel <b>start</b> aus. Lies mit einer zweiten solchen Aktion <b>sekunden</b> aus demselben Wörterbuch aus.</li>
+    <li>Füge „Training protokollieren“ hinzu und wähle „Traditionelles Krafttraining“. Setze das Startdatum auf den Wert von <b>start</b> und die Dauer auf den Wert von <b>sekunden</b> mit der Einheit Sekunden. Lass Strecke und Kalorien leer.</li>
+    <li>Tippe anschließend hier auf den Health-Button und erlaube Kurzbefehle beim ersten Aufruf, Trainings zu schreiben.</li></ol></details></section>`;
+}
+
 function summaryView(id) {
   const workout = S.workouts.find(w => w.id === id && w.ended_at);
   if (!workout) return `<div class="empty">Diese Trainingsanalyse ist nicht verfügbar.</div><a href="#profil">Zum Profil</a>`;
@@ -1073,6 +1092,7 @@ function summaryView(id) {
     <h2>${esc(workout.title)}</h2><p>${exercises.length} ${exercises.length === 1 ? "Übung" : "Übungen"}${Number.isFinite(minutes) ? ` · ${minutes < 1 ? "unter 1 Min." : minutes + " Min."}` : ""}</p></section>
     <div class="kpis sum num"><div><b>${totals.sets}</b><span>Sätze</span></div><div><b>${totals.reps}</b><span>Wiederholungen</span></div>
     <div><b>${fmtVol(totals.volume)}</b><span>Trainingsvolumen</span></div><div><b>${records}</b><span>Neue 1RM-Schätzrekorde</span></div></div>
+    ${totals.sets ? healthCard(workout) : ""}
     ${totals.sets ? `<section class="card"><h2>Deine Einheit im Überblick</h2>
       ${highlight ? `<p>Größtes Wiederholungsplus bei gleichem Gewicht: <b>${esc(highlight.name)}</b> (+${highlight.current.top - highlight.priorReps} Wdh. im besten Satz).</p>` : ""}
       <p>${totals.within} von ${totals.sets} Sätzen lagen im aktuellen Wiederholungsbereich der jeweiligen Übung. ${totals.below} darunter, ${totals.above} darüber.</p>
@@ -1211,6 +1231,16 @@ document.addEventListener("click", async ev => {
   const a = b.dataset.act, i = +b.dataset.i, j = +b.dataset.j;
   if (b.tagName === "BUTTON" && b.type !== "submit") ev.preventDefault();
   switch (a) {
+    case "exportHealth": {
+      const id = Number(b.dataset.id);
+      const payload = healthPayload(S.workouts.find(w => w.id === id));
+      if (!iPhoneWeb || !payload || !S.sets.some(set => set.workout_id === id)) return;
+      if (store.get(healthKey(id)) && !window.confirm("Du hast diese Einheit schon an Kurzbefehle übergeben. Prüfe zuerst Health, um doppelte Einträge zu vermeiden. Erneut übergeben?")) return;
+      store.set(healthKey(id), true);
+      b.textContent = "Erneut an Health übergeben";
+      window.location.href = "shortcuts://run-shortcut?name=BWAU%20Krafttraining&input=text&text=" + encodeURIComponent(JSON.stringify(payload));
+      return;
+    }
     case "clockStart": {
       if (!iPhoneWeb || !rest) return;
       const url = shortcutURL(rest.end);
